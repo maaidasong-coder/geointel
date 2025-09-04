@@ -7,5 +7,5 @@ class Incident(Base):
     __tablename__ = "incidents"
 
     id = Column(Integer, primary_key=True, index=True)
-    title = Column(String, index=True)
-    location = Column(String, index=True)
+    title = Column(String, index=True, nullable=False)
+    location = Column(String, index=True, nullable=False)
