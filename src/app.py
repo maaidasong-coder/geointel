@@ -4,6 +4,15 @@ from fastapi import FastAPI, Depends
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base, Session
 import os
+from dotenv import load_dotenv
+
+# ==============================
+# Load environment variables
+# ==============================
+
+# This will load variables from a local .env file (if present).
+# On Render, .env is not needed because DATABASE_URL is injected automatically.
+load_dotenv()
 
 # ==============================
 # Database setup
