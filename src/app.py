@@ -1,4 +1,31 @@
-from fastapi import FastAPI
+# src/app.py
+
+from fastapi import FastAPI, Depends
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, declarative_base, Session
+import os
+
+# ==============================
+# Database setup
+# ==============================
+
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/geointel")
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+# Dependency for DB sessions
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# ==============================
+# FastAPI app
+# ==============================
 
 app = FastAPI(title="GeoIntel API", version="0.1")
 
@@ -9,3 +36,12 @@ def read_root():
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+# Example endpoint using DB
+@app.get("/db-check")
+def db_check(db: Session = Depends(get_db)):
+    try:
+        db.execute("SELECT 1")  # simple query
+        return {"database": "connected"}
+    except Exception as e:
+        return {"database": f"error: {str(e)}"}
