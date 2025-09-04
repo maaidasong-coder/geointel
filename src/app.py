@@ -1,36 +1,18 @@
 # src/app.py
 
 from fastapi import FastAPI, Depends
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base, Session
-import os
-from dotenv import load_dotenv
+from sqlalchemy.orm import Session
+
+from . import models
+from .database import engine, get_db
 
 # ==============================
-# Load environment variables
+# Database initialization
 # ==============================
 
-# This will load variables from a local .env file (if present).
-# On Render, .env is not needed because DATABASE_URL is injected automatically.
-load_dotenv()
-
-# ==============================
-# Database setup
-# ==============================
-
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost:5432/geointel")
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-# Dependency for DB sessions
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Ensure tables are created (only for simple projects).
+# In production, prefer migrations with Alembic.
+models.Base.metadata.create_all(bind=engine)
 
 # ==============================
 # FastAPI app
@@ -46,11 +28,11 @@ def read_root():
 def health_check():
     return {"status": "ok"}
 
-# Example endpoint using DB
 @app.get("/db-check")
 def db_check(db: Session = Depends(get_db)):
+    """Simple endpoint to verify DB connectivity."""
     try:
-        db.execute("SELECT 1")  # simple query
+        db.execute("SELECT 1")
         return {"database": "connected"}
     except Exception as e:
         return {"database": f"error: {str(e)}"}
