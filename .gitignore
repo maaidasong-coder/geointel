@@ -74,3 +74,24 @@ settings.yaml
 data/
 notebooks/
 tmp/
+
+# =============================
+# Node / React / Vite ignores
+# =============================
+node_modules/
+dist/
+
+# Local environment for frontend
+frontend/.env
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# Editor junk
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
