@@ -5,17 +5,18 @@ export default function Map() {
   const [markerList, setMarkerList] = useState([]);
 
   useEffect(() => {
-    // Load Leaflet CSS
-    const leafletCSS = document.createElement("link");
-    leafletCSS.rel = "stylesheet";
-    leafletCSS.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-    document.head.appendChild(leafletCSS);
+    // Ensure Leaflet CSS is loaded once
+    if (!document.querySelector("link[href*='leaflet.css']")) {
+      const leafletCSS = document.createElement("link");
+      leafletCSS.rel = "stylesheet";
+      leafletCSS.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+      document.head.appendChild(leafletCSS);
+    }
 
-    // Load Leaflet JS
-    const leafletScript = document.createElement("script");
-    leafletScript.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
-    leafletScript.onload = () => {
+    // Ensure Leaflet JS is loaded once
+    const initMap = () => {
       const L = window.L;
+      if (!L) return;
 
       // Initialize map
       const map = L.map("map", { zoomControl: true }).setView(
@@ -36,7 +37,7 @@ export default function Map() {
           2
         )}, Lng: ${coords[1].toFixed(2)}`);
 
-        // Right-click (contextmenu) also removes marker
+        // Right-click (contextmenu) removes marker
         marker.on("contextmenu", () => {
           map.removeLayer(marker);
           setMarkerList((prev) => prev.filter((m) => m.id !== marker._leaflet_id));
@@ -54,25 +55,37 @@ export default function Map() {
         ]);
       };
 
-      // Default locations
-      const locations = [
+      // Default markers
+      [
         { name: "Yola", coords: [9.2035, 12.4954] },
         { name: "Abuja", coords: [9.0579, 7.4951] },
         { name: "Lagos", coords: [6.5244, 3.3792] },
         { name: "Kano", coords: [12.0022, 8.5919] },
-      ];
-      locations.forEach((loc) => addMarker(loc.name, loc.coords));
+      ].forEach((loc) => addMarker(loc.name, loc.coords));
 
-      // User adds markers by clicking
+      // Allow user to add markers by clicking
       map.on("click", (e) => {
         const { lat, lng } = e.latlng;
         addMarker(`Custom (${lat.toFixed(2)}, ${lng.toFixed(2)})`, [lat, lng], true);
       });
+
+      // Cleanup on unmount
+      return () => {
+        map.remove();
+      };
     };
-    document.body.appendChild(leafletScript);
+
+    if (!window.L) {
+      const leafletScript = document.createElement("script");
+      leafletScript.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+      leafletScript.onload = initMap;
+      document.body.appendChild(leafletScript);
+    } else {
+      initMap();
+    }
   }, []);
 
-  // Zoom to marker when clicked in side panel
+  // Zoom to marker from side panel
   const zoomToMarker = (marker) => {
     if (marker?.marker) {
       marker.marker.openPopup();
@@ -80,7 +93,7 @@ export default function Map() {
     }
   };
 
-  // Remove marker from panel
+  // Remove marker from side panel
   const removeMarker = (marker) => {
     if (marker?.marker) {
       marker.marker._map.removeLayer(marker.marker);
@@ -96,11 +109,13 @@ export default function Map() {
         className="flex-1 h-[500px] rounded-2xl shadow-lg border border-gray-300"
       ></div>
 
-      {/* Marker side panel */}
+      {/* Marker panel */}
       <div className="w-full md:w-72 h-[500px] overflow-y-auto bg-white rounded-2xl shadow-lg border border-gray-300 p-4">
         <h2 className="text-lg font-semibold mb-3 text-gray-700">📍 Markers</h2>
         {markerList.length === 0 ? (
-          <p className="text-gray-500 text-sm">No markers added yet. Click on the map to add one.</p>
+          <p className="text-gray-500 text-sm">
+            No markers added yet. Click on the map to add one.
+          </p>
         ) : (
           <ul className="space-y-2">
             {markerList.map((m) => (
@@ -127,4 +142,4 @@ export default function Map() {
       </div>
     </div>
   );
-}
+        }
