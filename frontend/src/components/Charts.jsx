@@ -3,11 +3,11 @@ import { useEffect } from "react";
 
 export default function Charts() {
   useEffect(() => {
-    // Load Recharts UMD build via CDN
+    // Load Recharts UMD via CDN
     const script = document.createElement("script");
-    script.src =
-      "https://unpkg.com/recharts/umd/Recharts.min.js";
+    script.src = "https://unpkg.com/recharts/umd/Recharts.min.js";
     script.async = true;
+
     script.onload = () => {
       const {
         ResponsiveContainer,
@@ -20,6 +20,7 @@ export default function Charts() {
         Legend,
       } = window.Recharts;
 
+      // Example data
       const data = [
         { name: "Jan", value: 40 },
         { name: "Feb", value: 55 },
@@ -31,7 +32,6 @@ export default function Charts() {
 
       const chartRoot = document.getElementById("chart-root");
 
-      // Render chart dynamically
       if (chartRoot) {
         window.ReactDOM.render(
           window.React.createElement(
@@ -48,7 +48,7 @@ export default function Charts() {
               window.React.createElement(Line, {
                 type: "monotone",
                 dataKey: "value",
-                stroke: "#2563eb",
+                stroke: "#2563eb", // Tailwind blue
                 strokeWidth: 3,
                 dot: { r: 5, strokeWidth: 2, fill: "#2563eb" },
               })
@@ -67,7 +67,7 @@ export default function Charts() {
       id="chart-root"
       className="w-full h-[400px] rounded-2xl shadow-lg border border-gray-300 p-4 bg-white"
     >
-      <p className="text-center text-gray-500">Loading chart...</p>
+      <p className="text-center text-gray-500">📊 Loading chart...</p>
     </div>
   );
-                                         }
+}
