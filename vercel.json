@@ -7,7 +7,7 @@
       "config": { "distDir": "dist" }
     }
   ],
-  "env": {
-    "NODE_VERSION": "18"
-  }
+  "routes": [
+    { "src": "/(.*)", "dest": "/frontend/$1" }
+  ]
 }
