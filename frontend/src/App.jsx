@@ -1,51 +1,39 @@
-// frontend/src/App.jsx
-import { useEffect } from "react";
+import React, { useEffect } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "leaflet-control-geocoder/dist/Control.Geocoder.css";
-import "leaflet-control-geocoder/dist/Control.Geocoder.js";
+import "leaflet-control-geocoder";
 
-function App() {
+export default function App() {
   useEffect(() => {
-    // Initialize map
-    const map = L.map("map").setView([9.05785, 12.4565], 7); // Adamawa, Nigeria
+    // Create the map
+    const map = L.map("map").setView([9.3265, 12.3984], 7); // Center: Yola, Adamawa
 
-    // Base layers
-    const street = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "© OpenStreetMap contributors",
-    });
+    // Add OpenStreetMap tiles
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution:
+        '&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a> contributors',
+    }).addTo(map);
 
-    const satellite = L.tileLayer(
-      "https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png",
-      {
-        attribution: "© OpenStreetMap, Humanitarian OSM",
-      }
-    );
+    // Add a marker for Yola
+    L.marker([9.3265, 12.3984])
+      .addTo(map)
+      .bindPopup("Yola - Adamawa State")
+      .openPopup();
 
-    street.addTo(map);
-
-    // Layer control
-    L.control.layers({ Street: street, Satellite: satellite }).addTo(map);
-
-    // Geocoder (search box)
+    // Add search box
     L.Control.geocoder().addTo(map);
 
-    // Click to add marker
-    map.on("click", (e) => {
-      L.marker(e.latlng).addTo(map).bindPopup(`📍 ${e.latlng.lat}, ${e.latlng.lng}`).openPopup();
-    });
-
-    return () => map.remove();
+    // Add scale
+    L.control.scale().addTo(map);
   }, []);
 
   return (
-    <div className="w-screen h-screen">
-      <header className="bg-blue-600 text-white p-3 text-center font-bold shadow-md">
-        🌍 GeoIntel – Geospatial Intelligence
-      </header>
-      <div id="map" className="w-full h-[92%]"></div>
+    <div className="w-full h-screen">
+      <h1 className="text-center text-2xl font-bold p-2 bg-gray-800 text-white shadow">
+        🌍 GeoIntel – Real Map Viewer
+      </h1>
+      <div id="map" className="w-full h-[90vh]"></div>
     </div>
   );
 }
-
-export default App;
