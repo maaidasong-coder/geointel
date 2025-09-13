@@ -9,7 +9,7 @@ requests==2.32.3
 Pillow==11.0.0
 exifread==3.0.0
 
-# PostgreSQL driver (fixed version)
+# PostgreSQL driver (stable)
 psycopg[binary]==3.2.10
 
 # WSGI server for production
@@ -21,5 +21,5 @@ SQLAlchemy==2.0.22
 # Optional: Load environment variables from .env
 python-dotenv==1.1.0
 
-# Ensure Flask compatibility
-Werkzeug==2.3.8
+# Werkzeug compatible with Flask 3.1
+Werkzeug>=3.1.0
