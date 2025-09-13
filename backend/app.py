@@ -173,7 +173,7 @@ def generate_ai_insights(ocr_text, scene, search_results, face_attributes=None):
                 insights.append(f"Face attributes: {fa_desc}")
         if search_results:
             insights.append(f"Found {sum(len(s.get('hits',[])) for s in search_results)} references")
-    except:
+    except Exception as e:
         insights.append("Partial AI insights available")
     return " ".join(insights) if insights else "No AI insights available."
 
@@ -190,15 +190,13 @@ def analyze():
     notes = request.form.get("notes","").strip()
     image_bytes = file.read()
 
-    # ---------------- ANALYSIS ----------------
-    geolocation = extract_gps(image_bytes)
+    geolocation = extract_gps(image_bytes) or {"info": "No GPS data"}
     embedding = call_embedding(image_bytes)
-    scene = call_scene(image_bytes)
-    ocr_raw = call_ocr(image_bytes)
-    face_data = call_face_embedding(image_bytes)
+    scene = call_scene(image_bytes) or []
+    ocr_raw = call_ocr(image_bytes) or ""
+    face_data = call_face_embedding(image_bytes) or []
     face_attributes = extract_face_attributes(face_data)
 
-    # Extract OCR text safely
     ocr_text = ""
     try:
         if isinstance(ocr_raw, dict) and "text" in ocr_raw:
@@ -211,34 +209,31 @@ def analyze():
     except:
         ocr_text = ""
 
-    # Queries + search
-    queries = build_queries(ocr_text or "", scene, notes, face_attributes)
+    queries = build_queries(ocr_text, scene, notes, face_attributes)
     provider_info, search_results = perform_search(queries)
     ai_insights = generate_ai_insights(ocr_text, scene, search_results, face_attributes)
+    geo_guesses = generate_geo_guesses(scene, ocr_text, face_attributes) if geolocation.get("info") else []
 
-    # Generate geo guesses if GPS is missing
-    geo_guesses = generate_geo_guesses(scene, ocr_text, face_attributes) if not geolocation else []
-
-    # ---------------- STORE ----------------
     case_id = str(uuid.uuid4())
     case_record = {
         "case_id": case_id,
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "notes": notes,
+        "notes": notes or "",
         "embedding": embedding,
         "scene_inferences": scene,
-        "ocr_text": ocr_text,
-        "face_data": face_data,
-        "face_attributes": face_attributes,
-        "geolocation": geolocation or {"info": "No GPS data"},
-        "geo_guesses": geo_guesses,
-        "queries": queries,
+        "ocr_text": ocr_text or "No OCR data",
+        "face_data": face_data or [],
+        "face_attributes": face_attributes or {},
+        "geolocation": geolocation,
+        "geo_guesses": geo_guesses or [],
+        "queries": queries or [],
         "search_provider": provider_info,
-        "search_results": search_results,
-        "ai_insights": ai_insights,
-        "osint": [hit for batch in search_results for hit in batch.get("hits",[])]
+        "search_results": search_results or [],
+        "ai_insights": ai_insights or "No AI insights available",
+        "osint": [hit for batch in search_results for hit in batch.get("hits",[])] if search_results else []
     }
     CASES[case_id] = case_record
+    print("Created case ID:", case_id)
     return jsonify(case_record)
 
 @app.route("/analyze_face", methods=["POST"])
@@ -251,10 +246,11 @@ def analyze_face():
     face_attributes = extract_face_attributes(face_data)
     num_faces = len(face_data) if isinstance(face_data,list) else 0
     return jsonify({
-    "faces_detected": num_faces,
-    "face_data": face_data,
-    "face_attributes": face_attributes
-})
+        "faces_detected": num_faces,
+        "face_data": face_data,
+        "face_attributes": face_attributes
+    })
+
 @app.route("/cases/<case_id>", methods=["GET"])
 def get_case(case_id):
     case = CASES.get(case_id)
@@ -262,6 +258,6 @@ def get_case(case_id):
         return jsonify({"error": "Case not found"}), 404
     return jsonify(case)
 
+# ---------------- MAIN ----------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
