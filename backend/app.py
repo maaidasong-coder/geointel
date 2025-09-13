@@ -12,13 +12,11 @@ CORS(app)
 HF_API_TOKEN = os.getenv("HF_TOKEN")
 HEADERS = {"Authorization": f"Bearer {HF_API_TOKEN}"} if HF_API_TOKEN else {}
 
-# Hugging Face endpoints
 EMBEDDING_MODEL_URL = os.getenv("EMBEDDING_MODEL_URL")
 SCENE_MODEL_URL = os.getenv("SCENE_MODEL_URL")
 OCR_MODEL_URL = os.getenv("OCR_MODEL_URL")
 FACE_MODEL_URL = os.getenv("FACE_MODEL_URL")
 
-# Search provider keys
 BING_API_KEY = os.getenv("BING_API_KEY")
 BING_ENDPOINT = os.getenv("BING_ENDPOINT")
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
@@ -31,71 +29,40 @@ def image_to_base64(image_bytes):
     return base64.b64encode(image_bytes).decode("utf-8")
 
 def call_hf_model(url, image_bytes):
-    if not HF_API_TOKEN:
-        raise RuntimeError("HF_TOKEN not set")
-    data = {"inputs": image_to_base64(image_bytes)}
-    r = requests.post(url, headers=HEADERS, json=data, timeout=40)
-    r.raise_for_status()
-    return r.json()
-
-def call_embedding(image_bytes):
-    try:
-        return call_hf_model(EMBEDDING_MODEL_URL, image_bytes)
-    except Exception as e:
-        return {"error": str(e)}
-
-def call_scene(image_bytes):
-    try:
-        return call_hf_model(SCENE_MODEL_URL, image_bytes)
-    except Exception as e:
-        return {"error": str(e)}
-
-def call_ocr(image_bytes):
-    try:
-        return call_hf_model(OCR_MODEL_URL, image_bytes)
-    except Exception as e:
-        return {"error": str(e)}
-
-def call_face_embedding(image_bytes):
-    if not HF_API_TOKEN:
-        raise RuntimeError("HF_TOKEN not set")
+    if not HF_API_TOKEN or not url:
+        return {"error": "HF_TOKEN or model URL not set"}
     data = {"inputs": image_to_base64(image_bytes)}
     try:
-        r = requests.post(FACE_MODEL_URL, headers=HEADERS, json=data, timeout=40)
+        r = requests.post(url, headers=HEADERS, json=data, timeout=40)
         r.raise_for_status()
         return r.json()
     except Exception as e:
         return {"error": str(e)}
 
+def call_embedding(image_bytes): return call_hf_model(EMBEDDING_MODEL_URL, image_bytes)
+def call_scene(image_bytes): return call_hf_model(SCENE_MODEL_URL, image_bytes)
+def call_ocr(image_bytes): return call_hf_model(OCR_MODEL_URL, image_bytes)
+def call_face_embedding(image_bytes): return call_hf_model(FACE_MODEL_URL, image_bytes)
+
 def extract_face_attributes(face_data):
     if not face_data or (isinstance(face_data, dict) and "error" in face_data):
         return {}
-    attributes = {}
     if isinstance(face_data, list) and len(face_data) > 0:
         first_face = face_data[0]
-        attributes["age"] = first_face.get("age")
-        attributes["gender"] = first_face.get("gender")
-        attributes["ethnicity"] = first_face.get("ethnicity")
-    return attributes
+        return {
+            "age": first_face.get("age"),
+            "gender": first_face.get("gender"),
+            "ethnicity": first_face.get("ethnicity")
+        }
+    return {}
 
 def generate_social_queries(face_attributes):
     if not face_attributes:
         return []
-    queries = []
-    desc = ""
-    if "age" in face_attributes:
-        desc += f"age {face_attributes['age']} "
-    if "gender" in face_attributes:
-        desc += f"{face_attributes['gender']} "
-    if "ethnicity" in face_attributes:
-        desc += f"{face_attributes['ethnicity']} "
-    desc = desc.strip()
-    if desc:
-        queries.append(f"{desc} site:linkedin.com")
-        queries.append(f"{desc} site:instagram.com")
-        queries.append(f"{desc} site:twitter.com")
-        queries.append(f"{desc} site:facebook.com")
-    return queries
+    desc = " ".join(f"{k} {v}" for k, v in face_attributes.items() if v)
+    if not desc:
+        return []
+    return [f"{desc} site:{site}" for site in ["linkedin.com","instagram.com","twitter.com","facebook.com"]]
 
 def extract_gps(image_bytes):
     try:
@@ -106,24 +73,36 @@ def extract_gps(image_bytes):
         gps_lon = tags.get("GPS GPSLongitude")
         gps_lon_ref = tags.get("GPS GPSLongitudeRef")
         if gps_lat and gps_lon and gps_lat_ref and gps_lon_ref:
-            lat = [float(x.num)/float(x.den) for x in gps_lat.values]
-            lon = [float(x.num)/float(x.den) for x in gps_lon.values]
-            lat = lat[0] + lat[1]/60 + lat[2]/3600
-            lon = lon[0] + lon[1]/60 + lon[2]/3600
-            if gps_lat_ref.values[0] != "N":
-                lat = -lat
-            if gps_lon_ref.values[0] != "E":
-                lon = -lon
+            lat = sum(float(x.num)/float(x.den)/60**i for i, x in enumerate(gps_lat.values[::-1]))
+            lon = sum(float(x.num)/float(x.den)/60**i for i, x in enumerate(gps_lon.values[::-1]))
+            lat = -lat if gps_lat_ref.values[0] != "N" else lat
+            lon = -lon if gps_lon_ref.values[0] != "E" else lon
             return {"latitude": lat, "longitude": lon}
-    except Exception as e:
-        return {"error": str(e)}
+    except:
+        return None
     return None
+
+# ---------------- GEO GUESS ----------------
+def generate_geo_guesses(scene=None, ocr_text=None, face_attributes=None):
+    guesses = []
+    if scene and isinstance(scene, list):
+        for s in scene[:3]:
+            if isinstance(s, dict) and "label" in s:
+                guesses.append(f"Possible location related to: {s['label']}")
+    if ocr_text:
+        for line in ocr_text.splitlines()[:3]:
+            guesses.append(f"Text hint: {line.strip()}")
+    if face_attributes:
+        desc = ", ".join(f"{k}:{v}" for k,v in face_attributes.items() if v)
+        if desc:
+            guesses.append(f"Demographic hint: {desc}")
+    if not guesses:
+        guesses = ["No explicit geo hints available"]
+    return guesses[:5]
 
 # ---------------- SEARCH ----------------
 def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
-    queries = []
-    if notes:
-        queries.append(notes)
+    queries = [notes] if notes else []
     if ocr_text:
         lines = [l.strip() for l in ocr_text.splitlines() if l.strip()]
         if lines:
@@ -135,12 +114,9 @@ def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
         queries.append(scene_labels["label"])
     if face_attributes:
         desc = "Person detected"
-        if "age" in face_attributes:
-            desc += f", age ~{face_attributes['age']}"
-        if "gender" in face_attributes:
-            desc += f", gender {face_attributes['gender']}"
-        if "ethnicity" in face_attributes:
-            desc += f", ethnicity {face_attributes['ethnicity']}"
+        for k in ["age","gender","ethnicity"]:
+            if k in face_attributes:
+                desc += f", {k} ~{face_attributes[k]}"
         queries.append(desc)
         queries += generate_social_queries(face_attributes)
     if not queries:
@@ -148,60 +124,57 @@ def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
     return list(dict.fromkeys(queries))[:10]
 
 def bing_search(query, top_k=5):
-    if not BING_API_KEY:
-        raise RuntimeError("BING_API_KEY not set")
-    base = BING_ENDPOINT.rstrip("/") if BING_ENDPOINT else "https://api.bing.microsoft.com"
-    url = f"{base}/v7.0/search"
-    headers = {"Ocp-Apim-Subscription-Key": BING_API_KEY}
-    params = {"q": query, "count": top_k}
-    r = requests.get(url, headers=headers, params=params, timeout=15)
-    r.raise_for_status()
-    data = r.json()
-    results = []
-    for item in data.get("webPages", {}).get("value", [])[:top_k]:
-        results.append({"title": item.get("name"), "snippet": item.get("snippet"), "url": item.get("url")})
-    return results
+    try:
+        if not BING_API_KEY:
+            return [{"error": "BING_API_KEY not set"}]
+        base = BING_ENDPOINT.rstrip("/") if BING_ENDPOINT else "https://api.bing.microsoft.com"
+        url = f"{base}/v7.0/search"
+        headers = {"Ocp-Apim-Subscription-Key": BING_API_KEY}
+        params = {"q": query, "count": top_k}
+        r = requests.get(url, headers=headers, params=params, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        return [{"title": i.get("name"), "snippet": i.get("snippet"), "url": i.get("url")}
+                for i in data.get("webPages", {}).get("value", [])[:top_k]]
+    except Exception as e:
+        return [{"error": str(e)}]
 
 def serpapi_search(query, top_k=5):
-    if not SERPAPI_KEY:
-        raise RuntimeError("SERPAPI_KEY not set")
-    url = "https://serpapi.com/search.json"
-    params = {"q": query, "api_key": SERPAPI_KEY, "num": top_k}
-    r = requests.get(url, params=params, timeout=15)
-    r.raise_for_status()
-    data = r.json()
-    results = []
-    for item in data.get("organic_results", [])[:top_k]:
-        results.append({"title": item.get("title"), "snippet": item.get("snippet"), "url": item.get("link")})
-    return results
+    try:
+        if not SERPAPI_KEY:
+            return [{"error": "SERPAPI_KEY not set"}]
+        r = requests.get("https://serpapi.com/search.json", params={"q": query, "api_key": SERPAPI_KEY, "num": top_k}, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        return [{"title": i.get("title"), "snippet": i.get("snippet"), "url": i.get("link")} for i in data.get("organic_results", [])[:top_k]]
+    except Exception as e:
+        return [{"error": str(e)}]
 
 def perform_search(queries):
-    if SERPAPI_KEY:
-        provider = "serpapi"
-    elif BING_API_KEY:
-        provider = "bing"
-    else:
+    provider = "serpapi" if SERPAPI_KEY else "bing" if BING_API_KEY else None
+    if not provider:
         return {"warning": "No search API key provided"}, []
     aggregated = []
     for q in queries[:3]:
-        try:
-            hits = serpapi_search(q) if provider == "serpapi" else bing_search(q)
-        except Exception as e:
-            hits = [{"error": str(e)}]
+        hits = serpapi_search(q) if provider=="serpapi" else bing_search(q)
         aggregated.append({"query": q, "hits": hits})
     return {"provider": provider}, aggregated
 
 def generate_ai_insights(ocr_text, scene, search_results, face_attributes=None):
     insights = []
-    if scene and isinstance(scene, list) and "label" in scene[0]:
-        insights.append(f"Scene appears to be: {scene[0]['label']} ({scene[0].get('score', 0):.2f} confidence).")
-    if ocr_text:
-        insights.append(f"OCR extracted text: {ocr_text[:100]}...")
-    if face_attributes:
-        fa_desc = ", ".join(f"{k}: {v}" for k, v in face_attributes.items() if v is not None)
-        insights.append(f"Face attributes: {fa_desc}")
-    if search_results:
-        insights.append(f"Found {sum(len(s.get('hits', [])) for s in search_results)} relevant open-source references.")
+    try:
+        if scene and isinstance(scene, list) and len(scene) > 0 and "label" in scene[0]:
+            insights.append(f"Scene: {scene[0]['label']} ({scene[0].get('score',0):.2f})")
+        if ocr_text:
+            insights.append(f"OCR text: {ocr_text[:100]}...")
+        if face_attributes:
+            fa_desc = ", ".join(f"{k}: {v}" for k,v in face_attributes.items() if v)
+            if fa_desc:
+                insights.append(f"Face attributes: {fa_desc}")
+        if search_results:
+            insights.append(f"Found {sum(len(s.get('hits',[])) for s in search_results)} references")
+    except:
+        insights.append("Partial AI insights available")
     return " ".join(insights) if insights else "No AI insights available."
 
 # ---------------- ROUTES ----------------
@@ -213,44 +186,40 @@ def home():
 def analyze():
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
-
     file = request.files["file"]
-    notes = request.form.get("notes", "").strip()
+    notes = request.form.get("notes","").strip()
     image_bytes = file.read()
 
-    # Step 0: Extract geolocation if available
+    # ---------------- ANALYSIS ----------------
     geolocation = extract_gps(image_bytes)
-
-    # Step 1: AI analysis
     embedding = call_embedding(image_bytes)
     scene = call_scene(image_bytes)
     ocr_raw = call_ocr(image_bytes)
     face_data = call_face_embedding(image_bytes)
     face_attributes = extract_face_attributes(face_data)
 
-    # Extract OCR text
-    ocr_text = None
-    if isinstance(ocr_raw, dict) and "text" in ocr_raw:
-        ocr_text = ocr_raw["text"]
-    elif isinstance(ocr_raw, str):
-        ocr_text = ocr_raw
-    elif isinstance(ocr_raw, list):
-        texts = []
-        for b in ocr_raw:
-            if isinstance(b, dict) and "text" in b:
-                texts.append(b["text"])
-            elif isinstance(b, str):
-                texts.append(b)
-        ocr_text = "\n".join(texts) if texts else None
+    # Extract OCR text safely
+    ocr_text = ""
+    try:
+        if isinstance(ocr_raw, dict) and "text" in ocr_raw:
+            ocr_text = ocr_raw["text"]
+        elif isinstance(ocr_raw, str):
+            ocr_text = ocr_raw
+        elif isinstance(ocr_raw, list):
+            texts = [b.get("text",b) if isinstance(b,dict) else b for b in ocr_raw]
+            ocr_text = "\n".join(texts)
+    except:
+        ocr_text = ""
 
-    # Step 2: Build queries + search
+    # Queries + search
     queries = build_queries(ocr_text or "", scene, notes, face_attributes)
     provider_info, search_results = perform_search(queries)
-
-    # Step 3: AI Insights
     ai_insights = generate_ai_insights(ocr_text, scene, search_results, face_attributes)
 
-    # Step 4: Store in memory
+    # Generate geo guesses if GPS is missing
+    geo_guesses = generate_geo_guesses(scene, ocr_text, face_attributes) if not geolocation else []
+
+    # ---------------- STORE ----------------
     case_id = str(uuid.uuid4())
     case_record = {
         "case_id": case_id,
@@ -261,35 +230,31 @@ def analyze():
         "ocr_text": ocr_text,
         "face_data": face_data,
         "face_attributes": face_attributes,
-        "geolocation": geolocation,
+        "geolocation": geolocation or {"info": "No GPS data"},
+        "geo_guesses": geo_guesses,
         "queries": queries,
         "search_provider": provider_info,
         "search_results": search_results,
         "ai_insights": ai_insights,
-        "osint": [hit for batch in search_results for hit in batch.get("hits", [])],
+        "osint": [hit for batch in search_results for hit in batch.get("hits",[])]
     }
     CASES[case_id] = case_record
-
     return jsonify(case_record)
 
 @app.route("/analyze_face", methods=["POST"])
 def analyze_face():
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
-
     file = request.files["file"]
     image_bytes = file.read()
-
     face_data = call_face_embedding(image_bytes)
     face_attributes = extract_face_attributes(face_data)
-    num_faces = len(face_data) if isinstance(face_data, list) else 0
-
+    num_faces = len(face_data) if isinstance(face_data,list) else 0
     return jsonify({
-        "faces_detected": num_faces,
-        "face_data": face_data,
-        "face_attributes": face_attributes
-    })
-
+    "faces_detected": num_faces,
+    "face_data": face_data,
+    "face_attributes": face_attributes
+})
 @app.route("/cases/<case_id>", methods=["GET"])
 def get_case(case_id):
     case = CASES.get(case_id)
