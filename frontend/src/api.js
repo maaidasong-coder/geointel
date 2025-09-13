@@ -23,13 +23,16 @@ export async function analyzeImage({ file, notes }) {
 
     // ✅ Normalize response so frontend always gets structured data
     return {
+      notes: result.notes || null,
       embedding: result.embedding || null,
       scene: result.scene || null,
-      ai_insights: result.ai_insights || "No AI insights available.",
-      osint: result.osint || "No OSINT data available yet.",
+      ocr_text: result.ocr_text || null,
+      queries: result.queries || [],
+      search_provider: result.search_provider || {},
+      search_results: result.search_results || [],
     };
   } catch (error) {
     console.error("API error:", error);
     throw error;
   }
-}
+      }
