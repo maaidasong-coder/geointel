@@ -1,3 +1,5 @@
+from dotenv import load_dotenv
+load_dotenv()
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests, base64, os, time, uuid
@@ -22,6 +24,10 @@ OCR_MODEL_URL = os.getenv(
     "OCR_MODEL_URL",
     "https://api-inference.huggingface.co/models/pszemraj/tinyocr",
 )
+FACE_MODEL_URL = os.getenv(
+    "FACE_MODEL_URL",
+    "https://api-inference.huggingface.co/models/your-username/face-embedding-model",
+)
 
 # Search provider keys
 BING_API_KEY = os.getenv("BING_API_KEY")
@@ -29,9 +35,7 @@ BING_ENDPOINT = os.getenv("BING_ENDPOINT")
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 
 # ---------------- STORAGE ----------------
-# In production you’d use a database
 CASES = {}
-
 
 # ---------------- HELPERS ----------------
 def image_to_base64(image_bytes):
@@ -68,8 +72,55 @@ def call_ocr(image_bytes):
         return {"error": str(e)}
 
 
+def call_face_embedding(image_bytes):
+    """Get face embeddings + attributes from HF"""
+    if not HF_API_TOKEN:
+        raise RuntimeError("HF_TOKEN not set")
+    data = {"inputs": image_to_base64(image_bytes)}
+    try:
+        r = requests.post(FACE_MODEL_URL, headers=HEADERS, json=data, timeout=40)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def extract_face_attributes(face_data):
+    """Attempt to extract attributes like age, gender, ethnicity"""
+    if not face_data or isinstance(face_data, dict) and "error" in face_data:
+        return {}
+    attributes = {}
+    if isinstance(face_data, list) and len(face_data) > 0:
+        first_face = face_data[0]
+        attributes["age"] = first_face.get("age")
+        attributes["gender"] = first_face.get("gender")
+        attributes["ethnicity"] = first_face.get("ethnicity")
+    return attributes
+
+
+def generate_social_queries(face_attributes):
+    """Generate social media style search queries from face attributes"""
+    if not face_attributes:
+        return []
+    queries = []
+    desc = ""
+    if "age" in face_attributes:
+        desc += f"age {face_attributes['age']} "
+    if "gender" in face_attributes:
+        desc += f"{face_attributes['gender']} "
+    if "ethnicity" in face_attributes:
+        desc += f"{face_attributes['ethnicity']} "
+    desc = desc.strip()
+    if desc:
+        queries.append(f"{desc} site:linkedin.com")
+        queries.append(f"{desc} site:instagram.com")
+        queries.append(f"{desc} site:twitter.com")
+        queries.append(f"{desc} site:facebook.com")
+    return queries
+
+
 # ---------------- SEARCH ----------------
-def build_queries(ocr_text, scene_labels, notes):
+def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
     queries = []
     if notes:
         queries.append(notes)
@@ -82,9 +133,21 @@ def build_queries(ocr_text, scene_labels, notes):
         queries += [str(lbl) for lbl in scene_labels[:5]]
     elif isinstance(scene_labels, dict) and "label" in scene_labels:
         queries.append(scene_labels["label"])
+    # Face-based descriptive queries
+    if face_attributes:
+        desc = "Person detected"
+        if "age" in face_attributes:
+            desc += f", age ~{face_attributes['age']}"
+        if "gender" in face_attributes:
+            desc += f", gender {face_attributes['gender']}"
+        if "ethnicity" in face_attributes:
+            desc += f", ethnicity {face_attributes['ethnicity']}"
+        queries.append(desc)
+        # Add social media style queries
+        queries += generate_social_queries(face_attributes)
     if not queries:
         queries = ["image forensic analysis", "possible identification from image"]
-    return list(dict.fromkeys(queries))[:6]
+    return list(dict.fromkeys(queries))[:10]  # Increased to 10 to include social queries
 
 
 def bing_search(query, top_k=5):
@@ -138,13 +201,16 @@ def perform_search(queries):
     return {"provider": provider}, aggregated
 
 
-def generate_ai_insights(ocr_text, scene, search_results):
+def generate_ai_insights(ocr_text, scene, search_results, face_attributes=None):
     insights = []
     if scene and isinstance(scene, list) and "label" in scene[0]:
         insights.append(f"Scene appears to be: {scene[0]['label']} "
                         f"({scene[0].get('score', 0):.2f} confidence).")
     if ocr_text:
         insights.append(f"OCR extracted text: {ocr_text[:100]}...")
+    if face_attributes:
+        fa_desc = ", ".join(f"{k}: {v}" for k, v in face_attributes.items() if v is not None)
+        insights.append(f"Face attributes: {fa_desc}")
     if search_results:
         insights.append(f"Found {sum(len(s.get('hits', [])) for s in search_results)} "
                         f"relevant open-source references.")
@@ -170,8 +236,10 @@ def analyze():
     embedding = call_embedding(image_bytes)
     scene = call_scene(image_bytes)
     ocr_raw = call_ocr(image_bytes)
+    face_data = call_face_embedding(image_bytes)
+    face_attributes = extract_face_attributes(face_data)
 
-    # Try to extract OCR text
+    # Extract OCR text
     ocr_text = None
     if isinstance(ocr_raw, dict) and "text" in ocr_raw:
         ocr_text = ocr_raw["text"]
@@ -187,11 +255,11 @@ def analyze():
         ocr_text = "\n".join(texts) if texts else None
 
     # Step 2: Build queries + search
-    queries = build_queries(ocr_text or "", scene, notes)
+    queries = build_queries(ocr_text or "", scene, notes, face_attributes)
     provider_info, search_results = perform_search(queries)
 
     # Step 3: AI Insights
-    ai_insights = generate_ai_insights(ocr_text, scene, search_results)
+    ai_insights = generate_ai_insights(ocr_text, scene, search_results, face_attributes)
 
     # Step 4: Store in memory
     case_id = str(uuid.uuid4())
@@ -202,6 +270,8 @@ def analyze():
         "embedding": embedding,
         "scene_inferences": scene,
         "ocr_text": ocr_text,
+        "face_data": face_data,
+        "face_attributes": face_attributes,
         "queries": queries,
         "search_provider": provider_info,
         "search_results": search_results,
@@ -211,6 +281,25 @@ def analyze():
     CASES[case_id] = case_record
 
     return jsonify(case_record)
+
+
+@app.route("/analyze_face", methods=["POST"])
+def analyze_face():
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    file = request.files["file"]
+    image_bytes = file.read()
+
+    face_data = call_face_embedding(image_bytes)
+    face_attributes = extract_face_attributes(face_data)
+    num_faces = len(face_data) if isinstance(face_data, list) else 0
+
+    return jsonify({
+        "faces_detected": num_faces,
+        "face_data": face_data,
+        "face_attributes": face_attributes
+    })
 
 
 @app.route("/cases/<case_id>", methods=["GET"])
