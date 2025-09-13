@@ -10,12 +10,13 @@ export default function Upload({ onCreated, analyzeImage }) {
     setError(null);
 
     try {
-      const result = await analyzeImage(file, notes); // ✅ Pass notes as well
+      // ✅ Call backend with both file + notes
+      const result = await analyzeImage({ file, notes });
       console.log("Analysis result:", result);
 
       // Generate temporary unique ID for case
       const caseId = Date.now();
-      onCreated({ id: caseId, notes, ...result }); // ✅ include notes
+      onCreated({ id: caseId, notes, ...result });
     } catch (err) {
       console.error("Upload failed:", err);
       setError("Failed to analyze image. Please try again.");
