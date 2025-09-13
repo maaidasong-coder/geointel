@@ -1,15 +1,15 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests, base64, os
+import requests, base64, os, time, uuid
 
 app = Flask(__name__)
-CORS(app)  # ✅ Allow frontend (React) to connect
+CORS(app)
 
 # ---------------- CONFIG ----------------
 HF_API_TOKEN = os.getenv("HF_TOKEN")
 HEADERS = {"Authorization": f"Bearer {HF_API_TOKEN}"} if HF_API_TOKEN else {}
 
-# Hugging Face endpoints (override with env if needed)
+# Hugging Face endpoints
 EMBEDDING_MODEL_URL = os.getenv(
     "EMBEDDING_MODEL_URL",
     "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
@@ -23,10 +23,14 @@ OCR_MODEL_URL = os.getenv(
     "https://api-inference.huggingface.co/models/pszemraj/tinyocr",
 )
 
-# Search provider keys (optional)
+# Search provider keys
 BING_API_KEY = os.getenv("BING_API_KEY")
-BING_ENDPOINT = os.getenv("BING_ENDPOINT")  # optional custom endpoint
+BING_ENDPOINT = os.getenv("BING_ENDPOINT")
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
+
+# ---------------- STORAGE ----------------
+# In production you’d use a database
+CASES = {}
 
 
 # ---------------- HELPERS ----------------
@@ -134,6 +138,19 @@ def perform_search(queries):
     return {"provider": provider}, aggregated
 
 
+def generate_ai_insights(ocr_text, scene, search_results):
+    insights = []
+    if scene and isinstance(scene, list) and "label" in scene[0]:
+        insights.append(f"Scene appears to be: {scene[0]['label']} "
+                        f"({scene[0].get('score', 0):.2f} confidence).")
+    if ocr_text:
+        insights.append(f"OCR extracted text: {ocr_text[:100]}...")
+    if search_results:
+        insights.append(f"Found {sum(len(s.get('hits', [])) for s in search_results)} "
+                        f"relevant open-source references.")
+    return " ".join(insights) if insights else "No AI insights available."
+
+
 # ---------------- ROUTES ----------------
 @app.route("/")
 def home():
@@ -173,18 +190,35 @@ def analyze():
     queries = build_queries(ocr_text or "", scene, notes)
     provider_info, search_results = perform_search(queries)
 
-    return jsonify(
-        {
-            "notes": notes,
-            "embedding": embedding,
-            "scene": scene,
-            "ocr_raw": ocr_raw,
-            "ocr_text": ocr_text,
-            "queries": queries,
-            "search_provider": provider_info,
-            "search_results": search_results,
-        }
-    )
+    # Step 3: AI Insights
+    ai_insights = generate_ai_insights(ocr_text, scene, search_results)
+
+    # Step 4: Store in memory
+    case_id = str(uuid.uuid4())
+    case_record = {
+        "case_id": case_id,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "notes": notes,
+        "embedding": embedding,
+        "scene_inferences": scene,
+        "ocr_text": ocr_text,
+        "queries": queries,
+        "search_provider": provider_info,
+        "search_results": search_results,
+        "ai_insights": ai_insights,
+        "osint": [hit for batch in search_results for hit in batch.get("hits", [])],
+    }
+    CASES[case_id] = case_record
+
+    return jsonify(case_record)
+
+
+@app.route("/cases/<case_id>", methods=["GET"])
+def get_case(case_id):
+    case = CASES.get(case_id)
+    if not case:
+        return jsonify({"error": "Case not found"}), 404
+    return jsonify(case)
 
 
 if __name__ == "__main__":
