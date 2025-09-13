@@ -11,9 +11,12 @@ CORS(app)  # ✅ Allow frontend (React) to connect
 HF_API_TOKEN = os.getenv("HF_TOKEN")
 HEADERS = {"Authorization": f"Bearer {HF_API_TOKEN}"}
 
-# Hugging Face model endpoints
-EMBEDDING_MODEL_URL = "https://api-inference.huggingface.co/models/sentence-transformers/clip-ViT-B-32"
-SCENE_MODEL_URL = "https://api-inference.huggingface.co/models/google/vit-base-patch16-224"
+# ✅ Hugging Face model endpoints
+# Embedding model: turns image into vector representation
+EMBEDDING_MODEL_URL = "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
+
+# Scene classification model: predicts what's in the image
+SCENE_MODEL_URL = "https://api-inference.huggingface.co/models/microsoft/resnet-50"
 
 # Convert image bytes to base64 string
 def image_to_base64(image_bytes):
