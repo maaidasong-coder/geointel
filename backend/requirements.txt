@@ -1,8 +1,25 @@
+# Core web framework
 Flask==3.1.0
 flask-cors==4.0.0
+
+# HTTP requests
 requests==2.32.3
+
+# Image processing
 Pillow==11.0.0
-gunicorn==23.0.0
 exifread==3.0.0
+
+# PostgreSQL driver
 psycopg[binary]==3.3.1
+
+# WSGI server for production
+gunicorn==23.0.0
+
+# Optional ORM (if used in the future)
 SQLAlchemy==2.0.22
+
+# Optional: Load environment variables from .env
+python-dotenv==1.1.0
+
+# Ensure Flask compatibility
+Werkzeug==2.3.8
