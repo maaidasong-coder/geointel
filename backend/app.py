@@ -4,7 +4,7 @@ import requests, base64, os, time, uuid
 from PIL import Image
 import exifread
 from io import BytesIO
-import psycopg2
+import psycopg  # <-- Downgraded from psycopg2
 import json
 
 app = Flask(__name__)
@@ -26,7 +26,7 @@ SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 # ---------------- DATABASE CONFIG ----------------
 DB_URL = os.getenv("DATABASE_URL") or "postgresql://geointel_database_user:0iT7TxP7eaUX7MMAilZQ5acTwSdmBSXE@dpg-d32vbvvdiees7394u580-a.oregon-postgres.render.com/geointel_database"
 
-conn = psycopg2.connect(DB_URL)
+conn = psycopg.connect(DB_URL)
 conn.autocommit = True
 cur = conn.cursor()
 
