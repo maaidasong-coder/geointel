@@ -1,8 +1,9 @@
-from dotenv import load_dotenv
-load_dotenv()
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests, base64, os, time, uuid
+from PIL import Image
+import exifread
+from io import BytesIO
 
 app = Flask(__name__)
 CORS(app)
@@ -12,22 +13,10 @@ HF_API_TOKEN = os.getenv("HF_TOKEN")
 HEADERS = {"Authorization": f"Bearer {HF_API_TOKEN}"} if HF_API_TOKEN else {}
 
 # Hugging Face endpoints
-EMBEDDING_MODEL_URL = os.getenv(
-    "EMBEDDING_MODEL_URL",
-    "https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2",
-)
-SCENE_MODEL_URL = os.getenv(
-    "SCENE_MODEL_URL",
-    "https://api-inference.huggingface.co/models/microsoft/resnet-50",
-)
-OCR_MODEL_URL = os.getenv(
-    "OCR_MODEL_URL",
-    "https://api-inference.huggingface.co/models/pszemraj/tinyocr",
-)
-FACE_MODEL_URL = os.getenv(
-    "FACE_MODEL_URL",
-    "https://api-inference.huggingface.co/models/your-username/face-embedding-model",
-)
+EMBEDDING_MODEL_URL = os.getenv("EMBEDDING_MODEL_URL")
+SCENE_MODEL_URL = os.getenv("SCENE_MODEL_URL")
+OCR_MODEL_URL = os.getenv("OCR_MODEL_URL")
+FACE_MODEL_URL = os.getenv("FACE_MODEL_URL")
 
 # Search provider keys
 BING_API_KEY = os.getenv("BING_API_KEY")
@@ -41,7 +30,6 @@ CASES = {}
 def image_to_base64(image_bytes):
     return base64.b64encode(image_bytes).decode("utf-8")
 
-
 def call_hf_model(url, image_bytes):
     if not HF_API_TOKEN:
         raise RuntimeError("HF_TOKEN not set")
@@ -50,13 +38,11 @@ def call_hf_model(url, image_bytes):
     r.raise_for_status()
     return r.json()
 
-
 def call_embedding(image_bytes):
     try:
         return call_hf_model(EMBEDDING_MODEL_URL, image_bytes)
     except Exception as e:
         return {"error": str(e)}
-
 
 def call_scene(image_bytes):
     try:
@@ -64,16 +50,13 @@ def call_scene(image_bytes):
     except Exception as e:
         return {"error": str(e)}
 
-
 def call_ocr(image_bytes):
     try:
         return call_hf_model(OCR_MODEL_URL, image_bytes)
     except Exception as e:
         return {"error": str(e)}
 
-
 def call_face_embedding(image_bytes):
-    """Get face embeddings + attributes from HF"""
     if not HF_API_TOKEN:
         raise RuntimeError("HF_TOKEN not set")
     data = {"inputs": image_to_base64(image_bytes)}
@@ -84,10 +67,8 @@ def call_face_embedding(image_bytes):
     except Exception as e:
         return {"error": str(e)}
 
-
 def extract_face_attributes(face_data):
-    """Attempt to extract attributes like age, gender, ethnicity"""
-    if not face_data or isinstance(face_data, dict) and "error" in face_data:
+    if not face_data or (isinstance(face_data, dict) and "error" in face_data):
         return {}
     attributes = {}
     if isinstance(face_data, list) and len(face_data) > 0:
@@ -97,9 +78,7 @@ def extract_face_attributes(face_data):
         attributes["ethnicity"] = first_face.get("ethnicity")
     return attributes
 
-
 def generate_social_queries(face_attributes):
-    """Generate social media style search queries from face attributes"""
     if not face_attributes:
         return []
     queries = []
@@ -118,6 +97,27 @@ def generate_social_queries(face_attributes):
         queries.append(f"{desc} site:facebook.com")
     return queries
 
+def extract_gps(image_bytes):
+    try:
+        img = BytesIO(image_bytes)
+        tags = exifread.process_file(img, details=False)
+        gps_lat = tags.get("GPS GPSLatitude")
+        gps_lat_ref = tags.get("GPS GPSLatitudeRef")
+        gps_lon = tags.get("GPS GPSLongitude")
+        gps_lon_ref = tags.get("GPS GPSLongitudeRef")
+        if gps_lat and gps_lon and gps_lat_ref and gps_lon_ref:
+            lat = [float(x.num)/float(x.den) for x in gps_lat.values]
+            lon = [float(x.num)/float(x.den) for x in gps_lon.values]
+            lat = lat[0] + lat[1]/60 + lat[2]/3600
+            lon = lon[0] + lon[1]/60 + lon[2]/3600
+            if gps_lat_ref.values[0] != "N":
+                lat = -lat
+            if gps_lon_ref.values[0] != "E":
+                lon = -lon
+            return {"latitude": lat, "longitude": lon}
+    except Exception as e:
+        return {"error": str(e)}
+    return None
 
 # ---------------- SEARCH ----------------
 def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
@@ -133,7 +133,6 @@ def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
         queries += [str(lbl) for lbl in scene_labels[:5]]
     elif isinstance(scene_labels, dict) and "label" in scene_labels:
         queries.append(scene_labels["label"])
-    # Face-based descriptive queries
     if face_attributes:
         desc = "Person detected"
         if "age" in face_attributes:
@@ -143,12 +142,10 @@ def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
         if "ethnicity" in face_attributes:
             desc += f", ethnicity {face_attributes['ethnicity']}"
         queries.append(desc)
-        # Add social media style queries
         queries += generate_social_queries(face_attributes)
     if not queries:
         queries = ["image forensic analysis", "possible identification from image"]
-    return list(dict.fromkeys(queries))[:10]  # Increased to 10 to include social queries
-
+    return list(dict.fromkeys(queries))[:10]
 
 def bing_search(query, top_k=5):
     if not BING_API_KEY:
@@ -162,11 +159,8 @@ def bing_search(query, top_k=5):
     data = r.json()
     results = []
     for item in data.get("webPages", {}).get("value", [])[:top_k]:
-        results.append(
-            {"title": item.get("name"), "snippet": item.get("snippet"), "url": item.get("url")}
-        )
+        results.append({"title": item.get("name"), "snippet": item.get("snippet"), "url": item.get("url")})
     return results
-
 
 def serpapi_search(query, top_k=5):
     if not SERPAPI_KEY:
@@ -178,11 +172,8 @@ def serpapi_search(query, top_k=5):
     data = r.json()
     results = []
     for item in data.get("organic_results", [])[:top_k]:
-        results.append(
-            {"title": item.get("title"), "snippet": item.get("snippet"), "url": item.get("link")}
-        )
+        results.append({"title": item.get("title"), "snippet": item.get("snippet"), "url": item.get("link")})
     return results
-
 
 def perform_search(queries):
     if SERPAPI_KEY:
@@ -200,28 +191,23 @@ def perform_search(queries):
         aggregated.append({"query": q, "hits": hits})
     return {"provider": provider}, aggregated
 
-
 def generate_ai_insights(ocr_text, scene, search_results, face_attributes=None):
     insights = []
     if scene and isinstance(scene, list) and "label" in scene[0]:
-        insights.append(f"Scene appears to be: {scene[0]['label']} "
-                        f"({scene[0].get('score', 0):.2f} confidence).")
+        insights.append(f"Scene appears to be: {scene[0]['label']} ({scene[0].get('score', 0):.2f} confidence).")
     if ocr_text:
         insights.append(f"OCR extracted text: {ocr_text[:100]}...")
     if face_attributes:
         fa_desc = ", ".join(f"{k}: {v}" for k, v in face_attributes.items() if v is not None)
         insights.append(f"Face attributes: {fa_desc}")
     if search_results:
-        insights.append(f"Found {sum(len(s.get('hits', [])) for s in search_results)} "
-                        f"relevant open-source references.")
+        insights.append(f"Found {sum(len(s.get('hits', [])) for s in search_results)} relevant open-source references.")
     return " ".join(insights) if insights else "No AI insights available."
-
 
 # ---------------- ROUTES ----------------
 @app.route("/")
 def home():
     return jsonify({"message": "GeoIntel Backend is live ✅"})
-
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -231,6 +217,9 @@ def analyze():
     file = request.files["file"]
     notes = request.form.get("notes", "").strip()
     image_bytes = file.read()
+
+    # Step 0: Extract geolocation if available
+    geolocation = extract_gps(image_bytes)
 
     # Step 1: AI analysis
     embedding = call_embedding(image_bytes)
@@ -272,6 +261,7 @@ def analyze():
         "ocr_text": ocr_text,
         "face_data": face_data,
         "face_attributes": face_attributes,
+        "geolocation": geolocation,
         "queries": queries,
         "search_provider": provider_info,
         "search_results": search_results,
@@ -281,7 +271,6 @@ def analyze():
     CASES[case_id] = case_record
 
     return jsonify(case_record)
-
 
 @app.route("/analyze_face", methods=["POST"])
 def analyze_face():
@@ -301,14 +290,12 @@ def analyze_face():
         "face_attributes": face_attributes
     })
 
-
 @app.route("/cases/<case_id>", methods=["GET"])
 def get_case(case_id):
     case = CASES.get(case_id)
     if not case:
         return jsonify({"error": "Case not found"}), 404
     return jsonify(case)
-
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
