@@ -5,17 +5,17 @@ export default function Upload({ onCreated, analyzeImage }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  async function handleFileUpload(file) {
+  async function handleFileUpload({ file, notes }) {
     setLoading(true);
     setError(null);
 
     try {
-      const result = await analyzeImage(file); // ✅ Call backend
+      const result = await analyzeImage(file, notes); // ✅ Pass notes as well
       console.log("Analysis result:", result);
 
-      // You can store the entire result as the "case"
-      const caseId = Date.now(); // temporary unique ID
-      onCreated({ id: caseId, ...result }); // pass up to App
+      // Generate temporary unique ID for case
+      const caseId = Date.now();
+      onCreated({ id: caseId, notes, ...result }); // ✅ include notes
     } catch (err) {
       console.error("Upload failed:", err);
       setError("Failed to analyze image. Please try again.");
@@ -27,7 +27,7 @@ export default function Upload({ onCreated, analyzeImage }) {
   return (
     <div>
       <h2 className="text-2xl font-semibold mb-4">Upload Evidence</h2>
-      
+
       {/* ✅ Hook into modal */}
       <UploadModal onFileSelected={handleFileUpload} />
 
@@ -35,7 +35,8 @@ export default function Upload({ onCreated, analyzeImage }) {
       {error && <p className="text-red-500 mt-2">{error}</p>}
 
       <p className="text-xs text-gray-500 mt-4">
-        By uploading, you confirm you have lawful authority to use this media for investigative purposes.
+        By uploading, you confirm you have lawful authority to use this media
+        for investigative purposes.
       </p>
     </div>
   );
