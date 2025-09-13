@@ -1,11 +1,12 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests, base64, os, time, uuid
+import requests, base64, os, uuid
 from PIL import Image
 import exifread
 from io import BytesIO
-import psycopg  # <-- Downgraded from psycopg2
+import psycopg
 import json
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -30,7 +31,6 @@ conn = psycopg.connect(DB_URL)
 conn.autocommit = True
 cur = conn.cursor()
 
-# Create table if not exists
 cur.execute("""
 CREATE TABLE IF NOT EXISTS cases (
     case_id UUID PRIMARY KEY,
@@ -82,14 +82,6 @@ def extract_face_attributes(face_data):
             "ethnicity": first_face.get("ethnicity")
         }
     return {}
-
-def generate_social_queries(face_attributes):
-    if not face_attributes:
-        return []
-    desc = " ".join(f"{k} {v}" for k, v in face_attributes.items() if v)
-    if not desc:
-        return []
-    return [f"{desc} site:{site}" for site in ["linkedin.com","instagram.com","twitter.com","facebook.com"]]
 
 def extract_gps(image_bytes):
     try:
@@ -143,11 +135,11 @@ def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
             if k in face_attributes:
                 desc += f", {k} ~{face_attributes[k]}"
         queries.append(desc)
-        queries += generate_social_queries(face_attributes)
     if not queries:
         queries = ["image forensic analysis", "possible identification from image"]
     return list(dict.fromkeys(queries))[:10]
 
+# ---------------- SEARCH & AI INSIGHTS ----------------
 def bing_search(query, top_k=5):
     try:
         if not BING_API_KEY:
@@ -197,7 +189,7 @@ def generate_ai_insights(ocr_text, scene, search_results, face_attributes=None):
             if fa_desc:
                 insights.append(f"Face attributes: {fa_desc}")
         if search_results:
-            insights.append(f"Found {sum(len(s.get('hits',[])) for s in search_results)} references")
+            insights.append(f"Found {sum(len(s.get('hits',[])) for s in search_results)} search references")
     except Exception as e:
         insights.append("Partial AI insights available")
     return " ".join(insights) if insights else "No AI insights available."
@@ -222,81 +214,52 @@ def analyze():
     face_data = call_face_embedding(image_bytes) or []
     face_attributes = extract_face_attributes(face_data)
 
+    # Correct OCR text extraction
     ocr_text = ""
-    try:
-        if isinstance(ocr_raw, dict) and "text" in ocr_raw:
-            ocr_text = ocr_raw["text"]
-        elif isinstance(ocr_raw, str):
-            ocr_text = ocr_raw
-        elif isinstance(ocr_raw, list):
-            texts = [b.get("text",b) if isinstance(b,dict) else b for b in ocr_raw]
-            ocr_text = "\n".join(texts)
-    except:
-        ocr_text = ""
+    if isinstance(ocr_raw, dict) and "text" in ocr_raw:
+        ocr_text = ocr_raw["text"]
+    elif isinstance(ocr_raw, str):
+        ocr_text = ocr_raw
+    elif isinstance(ocr_raw, list):
+        texts = [b.get("text", b) if isinstance(b, dict) else b for b in ocr_raw]
+        ocr_text = "\n".join(texts)
 
     queries = build_queries(ocr_text, scene, notes, face_attributes)
-    provider_info, search_results = perform_search(queries)
+    geo_guesses = generate_geo_guesses(scene, ocr_text, face_attributes)
+
+    # Perform search
+    search_provider, search_results = perform_search(queries)
+
+    # Generate AI insights
     ai_insights = generate_ai_insights(ocr_text, scene, search_results, face_attributes)
-    geo_guesses = generate_geo_guesses(scene, ocr_text, face_attributes) if geolocation.get("info") else []
 
+    # Save case
     case_id = str(uuid.uuid4())
-    created_at = time.strftime("%Y-%m-%d %H:%M:%S")
-    case_record = {
-        "case_id": case_id,
-        "created_at": created_at,
-        "notes": notes or "",
-        "embedding": embedding,
-        "scene_inferences": scene,
-        "ocr_text": ocr_text or "No OCR data",
-        "face_data": face_data or [],
-        "face_attributes": face_attributes or {},
-        "geolocation": geolocation,
-        "geo_guesses": geo_guesses or [],
-        "queries": queries or [],
-        "search_provider": provider_info,
-        "search_results": search_results or [],
-        "ai_insights": ai_insights or "No AI insights available",
-        "osint": [hit for batch in search_results for hit in batch.get("hits",[])] if search_results else []
-    }
-
-    # Insert into database
     cur.execute("""
-        INSERT INTO cases (case_id, created_at, notes, embedding, scene_inferences, ocr_text, face_data, face_attributes, geolocation, geo_guesses, queries, search_provider, search_results, ai_insights, osint)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO cases (case_id, created_at, notes, embedding, scene_inferences, ocr_text,
+        face_data, face_attributes, geolocation, geo_guesses, queries, search_provider,
+        search_results, ai_insights)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (
-        case_id,
-        created_at,
-        notes,
-        json.dumps(embedding),
-        json.dumps(scene),
-        ocr_text,
-        json.dumps(face_data),
-        json.dumps(face_attributes),
-        json.dumps(geolocation),
-        json.dumps(geo_guesses),
-        json.dumps(queries),
-        json.dumps(provider_info),
-        json.dumps(search_results),
-        ai_insights,
-        json.dumps([hit for batch in search_results for hit in batch.get("hits",[])] if search_results else [])
+        case_id, datetime.utcnow(), notes, json.dumps(embedding), json.dumps(scene),
+        ocr_text, json.dumps(face_data), json.dumps(face_attributes), json.dumps(geolocation),
+        json.dumps(geo_guesses), json.dumps(queries), json.dumps(search_provider),
+        json.dumps(search_results), ai_insights
     ))
 
-    print("Created case ID:", case_id)
-    return jsonify(case_record)
-
-@app.route("/analyze_face", methods=["POST"])
-def analyze_face():
-    if "file" not in request.files:
-        return jsonify({"error": "No file uploaded"}), 400
-    file = request.files["file"]
-    image_bytes = file.read()
-    face_data = call_face_embedding(image_bytes)
-    face_attributes = extract_face_attributes(face_data)
-    num_faces = len(face_data) if isinstance(face_data,list) else 0
     return jsonify({
-        "faces_detected": num_faces,
+        "case_id": case_id,
+        "geolocation": geolocation,
+        "embedding": embedding,
+        "scene": scene,
+        "ocr_text": ocr_text,
         "face_data": face_data,
-        "face_attributes": face_attributes
+        "face_attributes": face_attributes,
+        "queries": queries,
+        "geo_guesses": geo_guesses,
+        "search_provider": search_provider,
+        "search_results": search_results,
+        "ai_insights": ai_insights
     })
 
 @app.route("/cases/<case_id>", methods=["GET"])
@@ -305,10 +268,22 @@ def get_case(case_id):
     row = cur.fetchone()
     if not row:
         return jsonify({"error": "Case not found"}), 404
-    keys = ["case_id","created_at","notes","embedding","scene_inferences","ocr_text","face_data","face_attributes","geolocation","geo_guesses","queries","search_provider","search_results","ai_insights","osint"]
-    case = {k: json.loads(v) if k not in ["case_id","created_at","ocr_text","ai_insights","notes"] and v else v for k,v in zip(keys,row)}
-    return jsonify(case)
+    columns = [desc[0] for desc in cur.description]
+    return jsonify(dict(zip(columns, row)))
 
-# ---------------- MAIN ----------------
+@app.route("/test-data", methods=["GET"])
+def test_data():
+    return jsonify({
+        "message": "This is a test route for GeoIntel",
+        "sample_case": {
+            "case_id": str(uuid.uuid4()),
+            "notes": "Sample notes",
+            "geolocation": {"latitude": 9.2, "longitude": 12.5},
+            "ocr_text": "Sample OCR text",
+            "face_attributes": {"age": 25, "gender": "male", "ethnicity": "asian"},
+            "queries": ["Sample query 1", "Sample query 2"]
+        }
+    })
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)), debug=True)
+    app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
