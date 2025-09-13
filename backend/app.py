@@ -4,6 +4,8 @@ import requests, base64, os, time, uuid
 from PIL import Image
 import exifread
 from io import BytesIO
+import psycopg2
+import json
 
 app = Flask(__name__)
 CORS(app)
@@ -21,8 +23,33 @@ BING_API_KEY = os.getenv("BING_API_KEY")
 BING_ENDPOINT = os.getenv("BING_ENDPOINT")
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 
-# ---------------- STORAGE ----------------
-CASES = {}
+# ---------------- DATABASE CONFIG ----------------
+DB_URL = os.getenv("DATABASE_URL") or "postgresql://geointel_database_user:0iT7TxP7eaUX7MMAilZQ5acTwSdmBSXE@dpg-d32vbvvdiees7394u580-a.oregon-postgres.render.com/geointel_database"
+
+conn = psycopg2.connect(DB_URL)
+conn.autocommit = True
+cur = conn.cursor()
+
+# Create table if not exists
+cur.execute("""
+CREATE TABLE IF NOT EXISTS cases (
+    case_id UUID PRIMARY KEY,
+    created_at TIMESTAMP,
+    notes TEXT,
+    embedding JSONB,
+    scene_inferences JSONB,
+    ocr_text TEXT,
+    face_data JSONB,
+    face_attributes JSONB,
+    geolocation JSONB,
+    geo_guesses JSONB,
+    queries JSONB,
+    search_provider JSONB,
+    search_results JSONB,
+    ai_insights TEXT,
+    osint JSONB
+)
+""")
 
 # ---------------- HELPERS ----------------
 def image_to_base64(image_bytes):
@@ -82,7 +109,6 @@ def extract_gps(image_bytes):
         return None
     return None
 
-# ---------------- GEO GUESS ----------------
 def generate_geo_guesses(scene=None, ocr_text=None, face_attributes=None):
     guesses = []
     if scene and isinstance(scene, list):
@@ -100,7 +126,6 @@ def generate_geo_guesses(scene=None, ocr_text=None, face_attributes=None):
         guesses = ["No explicit geo hints available"]
     return guesses[:5]
 
-# ---------------- SEARCH ----------------
 def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
     queries = [notes] if notes else []
     if ocr_text:
@@ -215,9 +240,10 @@ def analyze():
     geo_guesses = generate_geo_guesses(scene, ocr_text, face_attributes) if geolocation.get("info") else []
 
     case_id = str(uuid.uuid4())
+    created_at = time.strftime("%Y-%m-%d %H:%M:%S")
     case_record = {
         "case_id": case_id,
-        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "created_at": created_at,
         "notes": notes or "",
         "embedding": embedding,
         "scene_inferences": scene,
@@ -232,7 +258,29 @@ def analyze():
         "ai_insights": ai_insights or "No AI insights available",
         "osint": [hit for batch in search_results for hit in batch.get("hits",[])] if search_results else []
     }
-    CASES[case_id] = case_record
+
+    # Insert into database
+    cur.execute("""
+        INSERT INTO cases (case_id, created_at, notes, embedding, scene_inferences, ocr_text, face_data, face_attributes, geolocation, geo_guesses, queries, search_provider, search_results, ai_insights, osint)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+    """, (
+        case_id,
+        created_at,
+        notes,
+        json.dumps(embedding),
+        json.dumps(scene),
+        ocr_text,
+        json.dumps(face_data),
+        json.dumps(face_attributes),
+        json.dumps(geolocation),
+        json.dumps(geo_guesses),
+        json.dumps(queries),
+        json.dumps(provider_info),
+        json.dumps(search_results),
+        ai_insights,
+        json.dumps([hit for batch in search_results for hit in batch.get("hits",[])] if search_results else [])
+    ))
+
     print("Created case ID:", case_id)
     return jsonify(case_record)
 
@@ -253,9 +301,12 @@ def analyze_face():
 
 @app.route("/cases/<case_id>", methods=["GET"])
 def get_case(case_id):
-    case = CASES.get(case_id)
-    if not case:
+    cur.execute("SELECT * FROM cases WHERE case_id=%s", (case_id,))
+    row = cur.fetchone()
+    if not row:
         return jsonify({"error": "Case not found"}), 404
+    keys = ["case_id","created_at","notes","embedding","scene_inferences","ocr_text","face_data","face_attributes","geolocation","geo_guesses","queries","search_provider","search_results","ai_insights","osint"]
+    case = {k: json.loads(v) if k not in ["case_id","created_at","ocr_text","ai_insights","notes"] and v else v for k,v in zip(keys,row)}
     return jsonify(case)
 
 # ---------------- MAIN ----------------
