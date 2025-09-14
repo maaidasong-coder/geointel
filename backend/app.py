@@ -66,10 +66,17 @@ def call_hf_model(url, image_bytes):
     except Exception as e:
         return {"error": str(e)}
 
-def call_embedding(image_bytes): return call_hf_model(EMBEDDING_MODEL_URL, image_bytes)
-def call_scene(image_bytes): return call_hf_model(SCENE_MODEL_URL, image_bytes)
-def call_ocr(image_bytes): return call_hf_model(OCR_MODEL_URL, image_bytes)
-def call_face_embedding(image_bytes): return call_hf_model(FACE_MODEL_URL, image_bytes)
+def call_embedding(image_bytes): 
+    return call_hf_model(EMBEDDING_MODEL_URL, image_bytes) or {"embedding": "N/A"}
+
+def call_scene(image_bytes): 
+    return call_hf_model(SCENE_MODEL_URL, image_bytes) or [{"label": "unknown", "score": 0}]
+
+def call_ocr(image_bytes): 
+    return call_hf_model(OCR_MODEL_URL, image_bytes) or "N/A"
+
+def call_face_embedding(image_bytes): 
+    return call_hf_model(FACE_MODEL_URL, image_bytes) or []
 
 def extract_face_attributes(face_data):
     if not face_data or (isinstance(face_data, dict) and "error" in face_data):
@@ -77,9 +84,9 @@ def extract_face_attributes(face_data):
     if isinstance(face_data, list) and len(face_data) > 0:
         first_face = face_data[0]
         return {
-            "age": first_face.get("age"),
-            "gender": first_face.get("gender"),
-            "ethnicity": first_face.get("ethnicity")
+            "age": first_face.get("age", "unknown"),
+            "gender": first_face.get("gender", "unknown"),
+            "ethnicity": first_face.get("ethnicity", "unknown")
         }
     return {}
 
@@ -98,8 +105,8 @@ def extract_gps(image_bytes):
             lon = -lon if gps_lon_ref.values[0] != "E" else lon
             return {"latitude": lat, "longitude": lon}
     except:
-        return None
-    return None
+        pass
+    return {"info": "No GPS data"}
 
 def generate_geo_guesses(scene=None, ocr_text=None, face_attributes=None):
     guesses = []
@@ -107,7 +114,7 @@ def generate_geo_guesses(scene=None, ocr_text=None, face_attributes=None):
         for s in scene[:3]:
             if isinstance(s, dict) and "label" in s:
                 guesses.append(f"Possible location related to: {s['label']}")
-    if ocr_text:
+    if ocr_text and ocr_text != "N/A":
         for line in ocr_text.splitlines()[:3]:
             guesses.append(f"Text hint: {line.strip()}")
     if face_attributes:
@@ -119,14 +126,14 @@ def generate_geo_guesses(scene=None, ocr_text=None, face_attributes=None):
     return guesses[:5]
 
 def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
-    queries = [notes] if notes else []
-    if ocr_text:
+    queries = [notes] if notes else ["Test image query"]
+    if ocr_text and ocr_text != "N/A":
         lines = [l.strip() for l in ocr_text.splitlines() if l.strip()]
         if lines:
             queries.append(" ".join(lines[:5]))
             queries += lines[:3]
     if isinstance(scene_labels, list):
-        queries += [str(lbl) for lbl in scene_labels[:5]]
+        queries += [str(lbl.get('label', lbl)) if isinstance(lbl, dict) else str(lbl) for lbl in scene_labels[:5]]
     elif isinstance(scene_labels, dict) and "label" in scene_labels:
         queries.append(scene_labels["label"])
     if face_attributes:
@@ -180,9 +187,9 @@ def perform_search(queries):
 def generate_ai_insights(ocr_text, scene, search_results, face_attributes=None):
     insights = []
     try:
-        if scene and isinstance(scene, list) and len(scene) > 0 and "label" in scene[0]:
+        if scene and isinstance(scene, list) and len(scene) > 0 and isinstance(scene[0], dict) and "label" in scene[0]:
             insights.append(f"Scene: {scene[0]['label']} ({scene[0].get('score',0):.2f})")
-        if ocr_text:
+        if ocr_text and ocr_text != "N/A":
             insights.append(f"OCR text: {ocr_text[:100]}...")
         if face_attributes:
             fa_desc = ", ".join(f"{k}: {v}" for k,v in face_attributes.items() if v)
@@ -207,22 +214,24 @@ def analyze():
     notes = request.form.get("notes","").strip()
     image_bytes = file.read()
 
-    geolocation = extract_gps(image_bytes) or {"info": "No GPS data"}
+    geolocation = extract_gps(image_bytes)
     embedding = call_embedding(image_bytes)
-    scene = call_scene(image_bytes) or []
-    ocr_raw = call_ocr(image_bytes) or ""
-    face_data = call_face_embedding(image_bytes) or []
+    scene = call_scene(image_bytes)
+    ocr_raw = call_ocr(image_bytes)
+    face_data = call_face_embedding(image_bytes)
     face_attributes = extract_face_attributes(face_data)
 
     # Correct OCR text extraction
     ocr_text = ""
     if isinstance(ocr_raw, dict) and "text" in ocr_raw:
-        ocr_text = ocr_raw["text"]
+        ocr_text = ocr_raw.get("text", "N/A")
     elif isinstance(ocr_raw, str):
         ocr_text = ocr_raw
     elif isinstance(ocr_raw, list):
         texts = [b.get("text", b) if isinstance(b, dict) else b for b in ocr_raw]
         ocr_text = "\n".join(texts)
+    if not ocr_text:
+        ocr_text = "N/A"
 
     queries = build_queries(ocr_text, scene, notes, face_attributes)
     geo_guesses = generate_geo_guesses(scene, ocr_text, face_attributes)
@@ -241,7 +250,7 @@ def analyze():
         search_results, ai_insights)
         VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
     """, (
-        case_id, datetime.utcnow(), notes, json.dumps(embedding), json.dumps(scene),
+        case_id, datetime.utcnow(), notes or "N/A", json.dumps(embedding), json.dumps(scene),
         ocr_text, json.dumps(face_data), json.dumps(face_attributes), json.dumps(geolocation),
         json.dumps(geo_guesses), json.dumps(queries), json.dumps(search_provider),
         json.dumps(search_results), ai_insights
