@@ -281,9 +281,8 @@ def test_data():
     columns = [desc[0] for desc in cur.description]
     return jsonify(dict(zip(columns, row)))
 
-if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
-    @app.route("/debug-cases", methods=["GET"])
+
+@app.route("/debug-cases", methods=["GET"])
 def debug_cases():
     try:
         cur.execute("SELECT case_id, created_at, notes FROM cases LIMIT 5;")
@@ -291,3 +290,7 @@ def debug_cases():
         return jsonify({"rows": rows}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
