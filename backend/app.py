@@ -25,7 +25,7 @@ BING_ENDPOINT = os.getenv("BING_ENDPOINT")
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 
 # ---------------- DATABASE CONFIG ----------------
-DB_URL = os.getenv("DATABASE_URL") or "postgresql://geointel_database_user:0iT7TxP7eaUX7MMAilZQ5acTwSdmBSXE@dpg-d32vbvvdiees7394u580-a.oregon-postgres.render.com/geointel_database"
+DB_URL = os.getenv("DATABASE_URL")
 
 conn = psycopg.connect(DB_URL)
 conn.autocommit = True
@@ -58,8 +58,8 @@ def image_to_base64(image_bytes):
 def call_hf_model(url, image_bytes):
     if not HF_API_TOKEN or not url:
         return {"error": "HF_TOKEN or model URL not set"}
-    data = {"inputs": image_to_base64(image_bytes)}
     try:
+        data = {"inputs": image_to_base64(image_bytes)}
         r = requests.post(url, headers=HEADERS, json=data, timeout=40)
         r.raise_for_status()
         return r.json()
@@ -67,16 +67,16 @@ def call_hf_model(url, image_bytes):
         return {"error": str(e)}
 
 def call_embedding(image_bytes): 
-    return call_hf_model(EMBEDDING_MODEL_URL, image_bytes) or {"embedding": "N/A"}
+    return call_hf_model(EMBEDDING_MODEL_URL, image_bytes)
 
 def call_scene(image_bytes): 
-    return call_hf_model(SCENE_MODEL_URL, image_bytes) or [{"label": "unknown", "score": 0}]
+    return call_hf_model(SCENE_MODEL_URL, image_bytes)
 
 def call_ocr(image_bytes): 
-    return call_hf_model(OCR_MODEL_URL, image_bytes) or "N/A"
+    return call_hf_model(OCR_MODEL_URL, image_bytes)
 
 def call_face_embedding(image_bytes): 
-    return call_hf_model(FACE_MODEL_URL, image_bytes) or []
+    return call_hf_model(FACE_MODEL_URL, image_bytes)
 
 def extract_face_attributes(face_data):
     if not face_data or (isinstance(face_data, dict) and "error" in face_data):
@@ -126,7 +126,7 @@ def generate_geo_guesses(scene=None, ocr_text=None, face_attributes=None):
     return guesses[:5]
 
 def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
-    queries = [notes] if notes else ["Test image query"]
+    queries = [notes] if notes else []
     if ocr_text and ocr_text != "N/A":
         lines = [l.strip() for l in ocr_text.splitlines() if l.strip()]
         if lines:
@@ -146,11 +146,11 @@ def build_queries(ocr_text, scene_labels, notes, face_attributes=None):
         queries = ["image forensic analysis", "possible identification from image"]
     return list(dict.fromkeys(queries))[:10]
 
-# ---------------- SEARCH & AI INSIGHTS ----------------
+# ---------------- SEARCH ----------------
 def bing_search(query, top_k=5):
     try:
         if not BING_API_KEY:
-            return [{"error": "BING_API_KEY not set"}]
+            return []
         base = BING_ENDPOINT.rstrip("/") if BING_ENDPOINT else "https://api.bing.microsoft.com"
         url = f"{base}/v7.0/search"
         headers = {"Ocp-Apim-Subscription-Key": BING_API_KEY}
@@ -160,51 +160,53 @@ def bing_search(query, top_k=5):
         data = r.json()
         return [{"title": i.get("name"), "snippet": i.get("snippet"), "url": i.get("url")}
                 for i in data.get("webPages", {}).get("value", [])[:top_k]]
-    except Exception as e:
-        return [{"error": str(e)}]
+    except:
+        return []
 
 def serpapi_search(query, top_k=5):
     try:
         if not SERPAPI_KEY:
-            return [{"error": "SERPAPI_KEY not set"}]
+            return []
         r = requests.get("https://serpapi.com/search.json", params={"q": query, "api_key": SERPAPI_KEY, "num": top_k}, timeout=15)
         r.raise_for_status()
         data = r.json()
         return [{"title": i.get("title"), "snippet": i.get("snippet"), "url": i.get("link")} for i in data.get("organic_results", [])[:top_k]]
-    except Exception as e:
-        return [{"error": str(e)}]
+    except:
+        return []
 
 def perform_search(queries):
     provider = "serpapi" if SERPAPI_KEY else "bing" if BING_API_KEY else None
     if not provider:
-        return {"warning": "No search API key provided"}, []
+        return {"provider": "none"}, []
     aggregated = []
     for q in queries[:3]:
         hits = serpapi_search(q) if provider=="serpapi" else bing_search(q)
         aggregated.append({"query": q, "hits": hits})
     return {"provider": provider}, aggregated
 
+# ---------------- AI INSIGHTS ----------------
 def generate_ai_insights(ocr_text, scene, search_results, face_attributes=None):
     insights = []
-    try:
-        if scene and isinstance(scene, list) and len(scene) > 0 and isinstance(scene[0], dict) and "label" in scene[0]:
-            insights.append(f"Scene: {scene[0]['label']} ({scene[0].get('score',0):.2f})")
-        if ocr_text and ocr_text != "N/A":
-            insights.append(f"OCR text: {ocr_text[:100]}...")
-        if face_attributes:
-            fa_desc = ", ".join(f"{k}: {v}" for k,v in face_attributes.items() if v)
-            if fa_desc:
-                insights.append(f"Face attributes: {fa_desc}")
-        if search_results:
-            insights.append(f"Found {sum(len(s.get('hits',[])) for s in search_results)} search references")
-    except Exception as e:
-        insights.append("Partial AI insights available")
+    if scene and isinstance(scene, list) and len(scene) > 0 and isinstance(scene[0], dict) and "label" in scene[0]:
+        insights.append(f"Scene: {scene[0]['label']}")
+    if ocr_text and ocr_text != "N/A":
+        insights.append(f"OCR text: {ocr_text[:100]}...")
+    if face_attributes:
+        fa_desc = ", ".join(f"{k}: {v}" for k,v in face_attributes.items() if v)
+        if fa_desc:
+            insights.append(f"Face attributes: {fa_desc}")
+    if search_results:
+        insights.append(f"Found {sum(len(s.get('hits',[])) for s in search_results)} search references")
     return " ".join(insights) if insights else "No AI insights available."
 
 # ---------------- ROUTES ----------------
 @app.route("/")
 def home():
     return jsonify({"message": "GeoIntel Backend is live ✅"})
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -221,28 +223,21 @@ def analyze():
     face_data = call_face_embedding(image_bytes)
     face_attributes = extract_face_attributes(face_data)
 
-    # Correct OCR text extraction
-    ocr_text = ""
+    # Normalize OCR
+    ocr_text = "N/A"
     if isinstance(ocr_raw, dict) and "text" in ocr_raw:
-        ocr_text = ocr_raw.get("text", "N/A")
+        ocr_text = ocr_raw["text"]
     elif isinstance(ocr_raw, str):
         ocr_text = ocr_raw
     elif isinstance(ocr_raw, list):
         texts = [b.get("text", b) if isinstance(b, dict) else b for b in ocr_raw]
         ocr_text = "\n".join(texts)
-    if not ocr_text:
-        ocr_text = "N/A"
 
     queries = build_queries(ocr_text, scene, notes, face_attributes)
     geo_guesses = generate_geo_guesses(scene, ocr_text, face_attributes)
-
-    # Perform search
     search_provider, search_results = perform_search(queries)
-
-    # Generate AI insights
     ai_insights = generate_ai_insights(ocr_text, scene, search_results, face_attributes)
 
-    # Save case
     case_id = str(uuid.uuid4())
     cur.execute("""
         INSERT INTO cases (case_id, created_at, notes, embedding, scene_inferences, ocr_text,
@@ -256,20 +251,17 @@ def analyze():
         json.dumps(search_results), ai_insights
     ))
 
-    return jsonify({
-        "case_id": case_id,
-        "geolocation": geolocation,
-        "embedding": embedding,
-        "scene": scene,
-        "ocr_text": ocr_text,
-        "face_data": face_data,
-        "face_attributes": face_attributes,
-        "queries": queries,
-        "geo_guesses": geo_guesses,
-        "search_provider": search_provider,
-        "search_results": search_results,
-        "ai_insights": ai_insights
-    })
+    return jsonify({"case_id": case_id, "ai_insights": ai_insights, "queries": queries})
+
+@app.route("/cases", methods=["GET"])
+def list_cases():
+    cur.execute("SELECT case_id, created_at, notes, ai_insights FROM cases ORDER BY created_at DESC LIMIT 10")
+    rows = cur.fetchall()
+    if not rows:
+        return jsonify({"message": "No cases found yet"}), 200
+    return jsonify([
+        {"case_id": r[0], "created_at": r[1], "notes": r[2], "ai_insights": r[3]} for r in rows
+    ])
 
 @app.route("/cases/<case_id>", methods=["GET"])
 def get_case(case_id):
@@ -282,17 +274,12 @@ def get_case(case_id):
 
 @app.route("/test-data", methods=["GET"])
 def test_data():
-    return jsonify({
-        "message": "This is a test route for GeoIntel",
-        "sample_case": {
-            "case_id": str(uuid.uuid4()),
-            "notes": "Sample notes",
-            "geolocation": {"latitude": 9.2, "longitude": 12.5},
-            "ocr_text": "Sample OCR text",
-            "face_attributes": {"age": 25, "gender": "male", "ethnicity": "asian"},
-            "queries": ["Sample query 1", "Sample query 2"]
-        }
-    })
+    cur.execute("SELECT case_id, notes, geolocation, ocr_text, face_attributes, queries FROM cases ORDER BY created_at DESC LIMIT 1")
+    row = cur.fetchone()
+    if not row:
+        return jsonify({"message": "No data in DB yet"}), 200
+    columns = [desc[0] for desc in cur.description]
+    return jsonify(dict(zip(columns, row)))
 
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
