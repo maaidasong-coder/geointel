@@ -1,44 +1,39 @@
-import React, { useState } from "react";
-import Navbar from "./components/Navbar";
-import Landing from "./pages/Landing";
-import Upload from "./pages/Upload";
-import Dashboard from "./pages/Dashboard";
-import CaseDetails from "./pages/CaseDetails";
-import { analyzeImage } from "./api"; // ✅ Import backend function
+// Example inside Dashboard.jsx
 
-export default function App() {
-  const [route, setRoute] = useState({ name: "landing", payload: null });
+import { useEffect, useState } from "react";
 
-  function go(name, payload = null) {
-    setRoute({ name, payload });
-    window.scrollTo(0, 0);
-  }
+function Dashboard() {
+  const [caseData, setCaseData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const res = await fetch("https://your-backend-url.com/api/cases/123");
+        const data = await res.json();
+
+        console.log("Fetched case data:", data); // 👈 Log the response
+
+        setCaseData(data);
+      } catch (err) {
+        console.error("Error fetching case data:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchData();
+  }, []);
+
+  if (loading) return <p>Loading...</p>;
+  if (!caseData || caseData.length === 0) return <p>No data for this case</p>;
 
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Navbar onNavigate={go} />
-      <div className="max-w-7xl mx-auto p-6">
-        {route.name === "landing" && <Landing onStart={() => go("upload")} />}
-        
-        {/* ✅ Pass backend function into Upload */}
-        {route.name === "upload" && (
-          <Upload onCreated={(c) => go("case", c)} analyzeImage={analyzeImage} />
-        )}
-        
-        {route.name === "dashboard" && (
-          <Dashboard onOpenCase={(id) => go("case", id)} />
-        )}
-        
-        {route.name === "case" && (
-          <CaseDetails
-            caseId={route.payload}
-            onBack={() => go("dashboard")}
-          />
-        )}
-      </div>
-      <footer className="text-center text-sm text-gray-500 p-6">
-        © {new Date().getFullYear()} GeoIntel — For authorized security use only.
-      </footer>
+    <div>
+      <h1>Case Details</h1>
+      <pre>{JSON.stringify(caseData, null, 2)}</pre>
     </div>
   );
-  }
+}
+
+export default Dashboard;
