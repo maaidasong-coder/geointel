@@ -27,7 +27,7 @@ export default function CaseDetails({ caseId, onBack }) {
     return <div>No data for this case.</div>;
   }
 
-  // ✅ Safe fallbacks since backend doesn’t return all fields
+  // ✅ Safe fallbacks since backend may not return all fields
   const markers = (data.locations || []).map((l) => ({
     lat: l.lat,
     lng: l.lng,
@@ -40,7 +40,9 @@ export default function CaseDetails({ caseId, onBack }) {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-2xl font-semibold">Case: {data.case_id}</h2>
-          <div className="text-sm text-gray-500">{data.created_at}</div>
+          <div className="text-sm text-gray-500">
+            {data.created_at ? new Date(data.created_at).toLocaleString() : "Unknown date"}
+          </div>
           {data.notes && (
             <div className="text-sm text-gray-600 mt-1">Notes: {data.notes}</div>
           )}
@@ -69,7 +71,7 @@ export default function CaseDetails({ caseId, onBack }) {
             {/* OCR Text */}
             <div className="bg-white p-4 rounded shadow">
               <h3 className="font-semibold">OCR Text</h3>
-              <pre className="text-xs text-gray-600 mt-2 whitespace-pre-wrap">
+              <pre className="text-xs text-gray-600 mt-2 whitespace-pre-wrap max-h-40 overflow-y-auto">
                 {data.ocr_text || "No text detected"}
               </pre>
             </div>
@@ -99,7 +101,7 @@ export default function CaseDetails({ caseId, onBack }) {
                 <div key={i} className="mt-3 border-b pb-2">
                   <div className="font-medium">Query: {sr.query}</div>
                   <ul className="ml-4 text-sm list-disc list-inside">
-                    {sr.hits.map((h, j) => (
+                    {(sr.hits || []).map((h, j) => (
                       <li key={j}>
                         <a
                           href={h.url}
