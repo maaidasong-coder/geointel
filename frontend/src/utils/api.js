@@ -1,9 +1,13 @@
-const BASE = (import.meta.env.VITE_API_BASE || import.meta.env.REACT_APP_API_BASE || "/api");
+// Hardcode your deployed backend for now
+const BASE =
+  import.meta.env.VITE_API_BASE ||
+  import.meta.env.REACT_APP_API_BASE ||
+  "https://geointel-backend.onrender.com";
 
 export async function createCase(formData) {
   const res = await fetch(`${BASE}/v1/cases`, {
     method: "POST",
-    body: formData
+    body: formData,
   });
   return res.json();
 }
