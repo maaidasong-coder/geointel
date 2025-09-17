@@ -4,7 +4,7 @@ import UploadModal from "../components/UploadModal";
 export default function Upload({ onCreated, analyzeImage }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [results, setResults] = useState(null); // ✅ Store analysis results
+  const [results, setResults] = useState(null);
 
   async function handleFileUpload({ file, notes }) {
     setLoading(true);
@@ -12,16 +12,20 @@ export default function Upload({ onCreated, analyzeImage }) {
     setResults(null);
 
     try {
-      // ✅ Call backend with both file + notes
+      // ✅ Call backend with file + notes
       const result = await analyzeImage({ file, notes });
       console.log("Analysis result:", result);
 
-      // Store in local state for display
+      // Store in local state for immediate preview
       setResults(result);
 
-      // Generate temporary unique ID for case
-      const caseId = Date.now();
-      onCreated({ id: caseId, notes, ...result });
+      // ✅ Use backend's case_id instead of Date.now()
+      if (result.case_id) {
+        onCreated(result.case_id);
+      } else {
+        console.warn("No case_id returned, using fallback.");
+        onCreated(Date.now()); // fallback to prevent crash
+      }
     } catch (err) {
       console.error("Upload failed:", err);
       setError("Failed to analyze image. Please try again.");
