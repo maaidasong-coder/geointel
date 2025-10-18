@@ -27,30 +27,39 @@ SERPAPI_KEY = os.getenv("SERPAPI_KEY")
 # ---------------- DATABASE CONFIG ----------------
 DB_URL = os.getenv("DATABASE_URL")
 
-conn = psycopg.connect(DB_URL)
-conn.autocommit = True
-cur = conn.cursor()
+conn = None
+cur = None
 
-cur.execute("""
-CREATE TABLE IF NOT EXISTS cases (
-    case_id UUID PRIMARY KEY,
-    created_at TIMESTAMP,
-    notes TEXT,
-    embedding JSONB,
-    scene_inferences JSONB,
-    ocr_text TEXT,
-    face_data JSONB,
-    face_attributes JSONB,
-    geolocation JSONB,
-    geo_guesses JSONB,
-    queries JSONB,
-    search_provider JSONB,
-    search_results JSONB,
-    ai_insights TEXT,
-    osint JSONB
-)
-""")
-
+try:
+    if DB_URL:
+        conn = psycopg.connect(DB_URL)
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS cases (
+            case_id UUID PRIMARY KEY,
+            created_at TIMESTAMP,
+            notes TEXT,
+            embedding JSONB,
+            scene_inferences JSONB,
+            ocr_text TEXT,
+            face_data JSONB,
+            face_attributes JSONB,
+            geolocation JSONB,
+            geo_guesses JSONB,
+            queries JSONB,
+            search_provider JSONB,
+            search_results JSONB,
+            ai_insights TEXT,
+            osint JSONB
+        )
+        """)
+        print("✅ Database connected and table ready.")
+    else:
+        print("⚠️ DATABASE_URL not set.")
+except Exception as e:
+    print(f"❌ Database connection failed: {e}")
+    
 # ---------------- HELPERS ----------------
 def image_to_base64(image_bytes):
     return base64.b64encode(image_bytes).decode("utf-8")
