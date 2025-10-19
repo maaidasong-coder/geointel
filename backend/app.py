@@ -13,6 +13,39 @@ import psycopg
 app = Flask(__name__)
 CORS(app)
 
+# ---------------- DATABASE CONFIG ----------------
+# Load database URL from Render environment variable
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# Configure SQLAlchemy
+app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# Initialize DB
+db = SQLAlchemy(app)
+
+# ---------------- DATABASE MODEL ----------------
+# Example table for storing image analysis records
+class Evidence(db.Model):
+    __tablename__ = "evidence"
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255))
+    file_type = db.Column(db.String(50))
+    analysis_result = db.Column(db.Text)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+
+# ---------------- CONNECTION TEST ----------------
+try:
+    with psycopg.connect(DATABASE_URL) as conn:
+        print("✅ Database connected successfully")
+except Exception as e:
+    print("❌ Database connection failed:", e)
+
+# ---------------- CREATE TABLES ----------------
+with app.app_context():
+    db.create_all()
+    print("📦 Tables created (if not exist)")
+
 # ---------------- LOCAL SQLITE SETUP ----------------
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 db_path = os.path.join(BASE_DIR, 'geointel.db')
