@@ -16,7 +16,6 @@ CORS(app)
 # ---------------- DATABASE CONFIG ----------------
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# If DATABASE_URL is not set (local dev), fallback to SQLite
 if DATABASE_URL:
     app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 else:
@@ -25,8 +24,6 @@ else:
     app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
 
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-
-# Initialize DB once
 db = SQLAlchemy(app)
 
 # ---------------- DATABASE MODEL ----------------
@@ -75,92 +72,37 @@ SCENE_MODEL_URL = os.getenv("SCENE_MODEL_URL")
 OCR_MODEL_URL = os.getenv("OCR_MODEL_URL")
 FACE_MODEL_URL = os.getenv("FACE_MODEL_URL")
 
-BING_API_KEY = os.getenv("BING_API_KEY")
-BING_ENDPOINT = os.getenv("BING_ENDPOINT")
-SERPAPI_KEY = os.getenv("SERPAPI_KEY")
-
-# ---------------- DATABASE CONFIG ----------------
-DB_URL = os.getenv("DATABASE_URL")
-conn = None
-cur = None
-
-try:
-    if DB_URL:
-        conn = psycopg.connect(DB_URL)
-        conn.autocommit = True
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS cases (
-                case_id UUID PRIMARY KEY,
-                created_at TIMESTAMP,
-                notes TEXT,
-                embedding JSONB,
-                scene_inferences JSONB,
-                ocr_text TEXT,
-                face_data JSONB,
-                face_attributes JSONB,
-                geolocation JSONB,
-                geo_guesses JSONB,
-                queries JSONB,
-                search_provider JSONB,
-                search_results JSONB,
-                ai_insights TEXT,
-                osint JSONB
-            )
-        """)
-        print("✅ Database connected and table ready.")
-    else:
-        print("⚠️ DATABASE_URL not set. Using SQLite fallback.")
-except Exception as e:
-    print(f"❌ Database connection failed: {e}")
-
 # ---------------- HELPERS ----------------
 def image_to_base64(image_bytes):
     return base64.b64encode(image_bytes).decode("utf-8")
 
-def call_hf_model(url, image_bytes):
+def call_hf_model(url, image_bytes, task_name):
+    """Generic Hugging Face API call with better error handling"""
     if not HF_API_TOKEN or not url:
-        return {"error": "HF_TOKEN or model URL not set"}
+        return {"error": f"{task_name} model URL or HF_TOKEN missing"}
     try:
-        data = {"inputs": image_to_base64(image_bytes)}
-        r = requests.post(url, headers=HEADERS, json=data, timeout=40)
-        r.raise_for_status()
+        payload = {"inputs": image_to_base64(image_bytes)}
+        r = requests.post(url, headers=HEADERS, json=payload, timeout=45)
+        if r.status_code != 200:
+            return {"error": f"{task_name} model failed: {r.text}"}
         return r.json()
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"{task_name} model exception: {str(e)}"}
 
-def call_embedding(image_bytes): return call_hf_model(EMBEDDING_MODEL_URL, image_bytes)
-def call_scene(image_bytes): return call_hf_model(SCENE_MODEL_URL, image_bytes)
-def call_ocr(image_bytes): return call_hf_model(OCR_MODEL_URL, image_bytes)
-def call_face_embedding(image_bytes): return call_hf_model(FACE_MODEL_URL, image_bytes)
-
-def extract_face_attributes(face_data):
-    if not face_data or (isinstance(face_data, dict) and "error" in face_data):
-        return {}
-    if isinstance(face_data, list) and len(face_data) > 0:
-        first_face = face_data[0]
-        return {
-            "age": first_face.get("age", "unknown"),
-            "gender": first_face.get("gender", "unknown"),
-            "ethnicity": first_face.get("ethnicity", "unknown")
-        }
-    return {}
-
-def extract_gps(image_bytes):
+def extract_gps(tags):
+    """Extract GPS coordinates from EXIF tags"""
     try:
-        img = BytesIO(image_bytes)
-        tags = exifread.process_file(img, details=False)
-        gps_lat = tags.get("GPS GPSLatitude")
-        gps_lat_ref = tags.get("GPS GPSLatitudeRef")
-        gps_lon = tags.get("GPS GPSLongitude")
-        gps_lon_ref = tags.get("GPS GPSLongitudeRef")
-        if gps_lat and gps_lon and gps_lat_ref and gps_lon_ref:
-            lat = sum(float(x.num)/float(x.den)/60**i for i, x in enumerate(gps_lat.values[::-1]))
-            lon = sum(float(x.num)/float(x.den)/60**i for i, x in enumerate(gps_lon.values[::-1]))
-            lat = -lat if gps_lat_ref.values[0] != "N" else lat
-            lon = -lon if gps_lon_ref.values[0] != "E" else lon
-            return {"latitude": lat, "longitude": lon}
-    except:
+        if "GPS GPSLatitude" in tags and "GPS GPSLongitude" in tags:
+            def dms_to_dd(dms, ref):
+                d, m, s = [float(x.num) / float(x.den) for x in dms.values]
+                dd = d + (m / 60.0) + (s / 3600.0)
+                if ref in ["S", "W"]:
+                    dd *= -1
+                return dd
+            lat = dms_to_dd(tags["GPS GPSLatitude"], str(tags.get("GPS GPSLatitudeRef", "N")))
+            lon = dms_to_dd(tags["GPS GPSLongitude"], str(tags.get("GPS GPSLongitudeRef", "E")))
+            return {"lat": lat, "lon": lon}
+    except Exception:
         pass
     return {"info": "No GPS data"}
 
@@ -175,30 +117,17 @@ def health():
 
 @app.route("/cases", methods=["GET"])
 def list_cases():
-    if cur:
-        cur.execute("SELECT case_id, created_at, notes, ai_insights FROM cases ORDER BY created_at DESC LIMIT 10")
-        rows = cur.fetchall()
-        if not rows:
-            return jsonify({"message": "No cases found yet"}), 200
-        return jsonify([{"case_id": r[0], "created_at": r[1], "notes": r[2], "ai_insights": r[3]} for r in rows])
-    else:
-        cases = Evidence.query.order_by(Evidence.timestamp.desc()).limit(10).all()
-        return jsonify([c.to_dict() for c in cases])
+    cases = Evidence.query.order_by(Evidence.timestamp.desc()).limit(10).all()
+    if not cases:
+        return jsonify({"message": "No cases found yet"}), 200
+    return jsonify([c.to_dict() for c in cases])
 
 @app.route("/cases/<case_id>", methods=["GET"])
 def get_case(case_id):
-    if cur:
-        cur.execute("SELECT * FROM cases WHERE case_id=%s", (case_id,))
-        row = cur.fetchone()
-        if not row:
-            return jsonify({"error": "Case not found"}), 404
-        columns = [desc[0] for desc in cur.description]
-        return jsonify(dict(zip(columns, row)))
-    else:
-        case = Evidence.query.filter_by(case_id=case_id).first()
-        if not case:
-            return jsonify({"error": "Case not found"}), 404
-        return jsonify(case.to_dict())
+    case = Evidence.query.filter_by(case_id=case_id).first()
+    if not case:
+        return jsonify({"error": "Case not found"}), 404
+    return jsonify(case.to_dict())
 
 # ---------------- UPLOAD ENDPOINT ----------------
 @app.route("/api/upload", methods=["POST"])
@@ -215,56 +144,53 @@ def upload_evidence():
         filepath = os.path.join(uploads_dir, filename)
         file.save(filepath)
 
+        # Load image bytes
         with open(filepath, "rb") as f:
-            tags = exifread.process_file(f, details=False)
+            image_bytes = f.read()
 
-        gps_lat, gps_lon = None, None
-        if "GPS GPSLatitude" in tags and "GPS GPSLongitude" in tags:
-            def dms_to_dd(dms, ref):
-                d, m, s = [float(x.num) / float(x.den) for x in dms.values]
-                dd = d + (m / 60.0) + (s / 3600.0)
-                if ref in ["S", "W"]:
-                    dd *= -1
-                return dd
-            gps_lat = dms_to_dd(tags["GPS GPSLatitude"], str(tags.get("GPS GPSLatitudeRef", "N")))
-            gps_lon = dms_to_dd(tags["GPS GPSLongitude"], str(tags.get("GPS GPSLongitudeRef", "E")))
+        # Extract EXIF + GPS
+        tags = exifread.process_file(BytesIO(image_bytes), details=False)
+        gps_data = extract_gps(tags)
+        exif_data = {k: str(v) for k, v in tags.items()}
+
+        # ---------- AI MODEL ANALYSIS ----------
+        scene_result = call_hf_model(SCENE_MODEL_URL, image_bytes, "Scene Detection")
+        ocr_result = call_hf_model(OCR_MODEL_URL, image_bytes, "OCR Text Extraction")
+        face_result = call_hf_model(FACE_MODEL_URL, image_bytes, "Face Recognition")
+        embedding_result = call_hf_model(EMBEDDING_MODEL_URL, image_bytes, "Image Embedding")
+
+        ai_summary = {
+            "scene": scene_result,
+            "ocr": ocr_result,
+            "face": face_result,
+            "embedding": embedding_result,
+            "exif": exif_data,
+            "gps": gps_data
+        }
 
         case_id = str(uuid.uuid4())
-        created_at = datetime.utcnow()
-        geolocation = json.dumps({"lat": gps_lat, "lon": gps_lon})
-        exif_data = json.dumps({k: str(v) for k, v in tags.items()})
-
-        if cur:
-            cur.execute("""
-                INSERT INTO cases (case_id, created_at, notes, geolocation, ai_insights, ocr_text, face_attributes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (case_id, created_at, notes, geolocation, exif_data, None, None))
-            conn.commit()
-        else:
-            evidence = Evidence(
-                case_id=case_id,
-                filename=filename,
-                notes=notes,
-                geolocation=geolocation,
-                ai_insights=exif_data
-            )
-            db.session.add(evidence)
-            db.session.commit()
+        evidence = Evidence(
+            case_id=case_id,
+            filename=filename,
+            notes=notes,
+            geolocation=json.dumps(gps_data),
+            ai_insights=json.dumps(ai_summary, indent=2)
+        )
+        db.session.add(evidence)
+        db.session.commit()
 
         return jsonify({
-            "message": "Evidence uploaded successfully",
+            "message": "Evidence analyzed successfully ✅",
             "case_id": case_id,
             "filename": filename,
-            "geolocation": {"lat": gps_lat, "lon": gps_lon},
-            "exif_tags": {k: str(v) for k, v in tags.items()}
+            "geolocation": gps_data,
+            "ai_results": ai_summary
         }), 200
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print("❌ Upload error:", e)
+        return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
 
 # ---------------- RUN ----------------
-with app.app_context():
-    db.create_all()
-
 if __name__ == "__main__":
     app.run(debug=True, host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
