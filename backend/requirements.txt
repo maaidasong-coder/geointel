@@ -1,25 +1,35 @@
-# Core web framework
+# ----------------------------
+# Core Web Framework
+# ----------------------------
 Flask==3.1.0
 flask-cors==4.0.0
+Flask-SQLAlchemy==3.1.1
 
-# HTTP requests
+# ----------------------------
+# HTTP Requests & Utilities
+# ----------------------------
 requests==2.32.3
+python-dotenv==1.1.0
 
-# Image processing
+# ----------------------------
+# Image & File Processing
+# ----------------------------
 Pillow==11.0.0
 exifread==3.0.0
 
-# PostgreSQL driver (stable)
-psycopg[binary]==3.2.10
+# ----------------------------
+# Database Drivers
+# ----------------------------
+psycopg[binary]==3.2.10   # PostgreSQL
+SQLAlchemy==2.0.22        # ORM core (used by Flask-SQLAlchemy)
+sqlite-utils==3.36        # Optional SQLite management tools
 
-# WSGI server for production
+# ----------------------------
+# Production Server
+# ----------------------------
 gunicorn==23.0.0
 
-# Optional ORM (if used in the future)
-SQLAlchemy==2.0.22
-
-# Optional: Load environment variables from .env
-python-dotenv==1.1.0
-
-# Werkzeug compatible with Flask 3.1
+# ----------------------------
+# Compatibility
+# ----------------------------
 Werkzeug>=3.1.0
