@@ -1,13 +1,10 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests, base64, os, uuid
 from PIL import Image
-import exifread
-from io import BytesIO
+import exifread, os, uuid, json
 from datetime import datetime
 from flask_sqlalchemy import SQLAlchemy
-import json
-import psycopg
+from sqlalchemy.exc import DataError
 
 # ---------------- APP INIT ----------------
 app = Flask(__name__)
@@ -15,7 +12,6 @@ CORS(app)
 
 # ---------------- DATABASE CONFIG ----------------
 DATABASE_URL = os.getenv("DATABASE_URL")
-
 if DATABASE_URL:
     app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
 else:
@@ -44,24 +40,80 @@ class Evidence(db.Model):
             "filename": self.filename,
             "notes": self.notes,
             "geolocation": self.geolocation,
-            "ai_insights": self.ai_insights,
+            "ai_insights": json.loads(self.ai_insights) if self.ai_insights else {},
             "timestamp": self.timestamp.isoformat()
         }
-
-# ---------------- CONNECTION TEST ----------------
-try:
-    if DATABASE_URL:
-        with psycopg.connect(DATABASE_URL) as conn:
-            print("✅ Database connected successfully")
-    else:
-        print("⚠️ Using SQLite fallback (no DATABASE_URL found)")
-except Exception as e:
-    print("❌ Database connection failed:", e)
 
 # ---------------- CREATE TABLES ----------------
 with app.app_context():
     db.create_all()
     print("📦 Tables created (if not exist)")
+
+# ---------------- ROUTES ----------------
+@app.route("/analyze", methods=["POST"])
+def analyze_image():
+    try:
+        if "file" not in request.files:
+            return jsonify({"error": "No file part in request"}), 400
+
+        file = request.files["file"]
+        if file.filename == "":
+            return jsonify({"error": "No selected file"}), 400
+
+        filename = file.filename
+        img = Image.open(file.stream)
+        file.stream.seek(0)  # reset stream for exifread
+
+        # Extract EXIF
+        tags = exifread.process_file(file.stream, details=False)
+        exif_data = {tag: str(tags[tag]) for tag in tags.keys()}
+
+        # Save to database
+        evidence = Evidence(filename=filename, ai_insights=json.dumps(exif_data))
+        db.session.add(evidence)
+        db.session.commit()
+
+        return jsonify({
+            "message": "Analysis complete",
+            "case_id": evidence.case_id,
+            "insights": exif_data,
+            "case_url": f"/cases/{evidence.case_id}"
+        }), 200
+
+    except Exception as e:
+        print(f"❌ Error analyzing image: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/cases/<case_id>", methods=["GET"])
+def get_case(case_id):
+    try:
+        # Validate UUID
+        try:
+            uuid_obj = str(uuid.UUID(case_id))
+        except ValueError:
+            return jsonify({"error": "Invalid case_id format"}), 400
+
+        evidence = Evidence.query.filter_by(case_id=uuid_obj).first()
+        if not evidence:
+            return jsonify({"error": "Case not found"}), 404
+
+        return jsonify({"case": evidence.to_dict()}), 200
+
+    except DataError as e:
+        print(f"❌ Database error: {e}")
+        return jsonify({"error": "Database query failed"}), 500
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ---------------- OPTIONAL: favicon route ----------------
+@app.route("/favicon.ico")
+def favicon():
+    return "", 204
+
+# ---------------- RUN APP ----------------
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 10000)), debug=True)
 
 # ---------------- CONFIG ----------------
 HF_API_TOKEN = os.getenv("HF_TOKEN")
