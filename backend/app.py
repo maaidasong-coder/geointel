@@ -1,3 +1,4 @@
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests, base64, os, uuid
@@ -14,47 +15,24 @@ app = Flask(__name__)
 CORS(app)
 
 # ---------------- DATABASE CONFIG ----------------
-# Load database URL from Render environment variable
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Configure SQLAlchemy
-app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+# If DATABASE_URL is not set (local dev), fallback to SQLite
+if DATABASE_URL:
+    app.config["SQLALCHEMY_DATABASE_URI"] = DATABASE_URL
+else:
+    BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+    db_path = os.path.join(BASE_DIR, 'geointel.db')
+    app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path}"
+
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# Initialize DB
+# Initialize DB once
 db = SQLAlchemy(app)
 
 # ---------------- DATABASE MODEL ----------------
-# Example table for storing image analysis records
 class Evidence(db.Model):
     __tablename__ = "evidence"
-    id = db.Column(db.Integer, primary_key=True)
-    filename = db.Column(db.String(255))
-    file_type = db.Column(db.String(50))
-    analysis_result = db.Column(db.Text)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-
-# ---------------- CONNECTION TEST ----------------
-try:
-    with psycopg.connect(DATABASE_URL) as conn:
-        print("✅ Database connected successfully")
-except Exception as e:
-    print("❌ Database connection failed:", e)
-
-# ---------------- CREATE TABLES ----------------
-with app.app_context():
-    db.create_all()
-    print("📦 Tables created (if not exist)")
-
-# ---------------- LOCAL SQLITE SETUP ----------------
-BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-db_path = os.path.join(BASE_DIR, 'geointel.db')
-app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{db_path}'
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-db = SQLAlchemy(app)
-
-
-class Evidence(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     filename = db.Column(db.String(255))
     notes = db.Column(db.Text)
@@ -68,6 +46,20 @@ class Evidence(db.Model):
             "timestamp": self.timestamp.isoformat()
         }
 
+# ---------------- CONNECTION TEST ----------------
+try:
+    if DATABASE_URL:
+        with psycopg.connect(DATABASE_URL) as conn:
+            print("✅ Database connected successfully")
+    else:
+        print("⚠️ Using SQLite fallback (no DATABASE_URL found)")
+except Exception as e:
+    print("❌ Database connection failed:", e)
+
+# ---------------- CREATE TABLES ----------------
+with app.app_context():
+    db.create_all()
+    print("📦 Tables created (if not exist)")
 
 # ---------------- CONFIG ----------------
 HF_API_TOKEN = os.getenv("HF_TOKEN")
