@@ -20,9 +20,11 @@ exifread==3.0.0
 # ----------------------------
 # Database Drivers
 # ----------------------------
-psycopg[binary]==3.2.10   # PostgreSQL
-SQLAlchemy==2.0.22        # ORM core (used by Flask-SQLAlchemy)
-sqlite-utils==3.36        # Optional SQLite management tools
+# psycopg[binary] (v3) for modern usage, psycopg2-binary for backward compatibility
+psycopg[binary]==3.2.10        # PostgreSQL (modern)
+psycopg2-binary==2.9.9          # Legacy PostgreSQL adapter (required by SQLAlchemy)
+SQLAlchemy==2.0.22              # ORM core (used by Flask-SQLAlchemy)
+sqlite-utils==3.36              # Optional SQLite management tools
 
 # ----------------------------
 # Production Server
