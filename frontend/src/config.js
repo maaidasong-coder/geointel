@@ -1,9 +1,5 @@
-// src/config.js
-
-export const BASE = "https://geointel-backend.onrender.com"; // ✅ for older imports
-
 const CONFIG = {
-  BACKEND_URL: BASE
+  BACKEND_URL: "https://geointel-backend.onrender.com/api" // ✅ add /api here
 };
 
 export default CONFIG;
