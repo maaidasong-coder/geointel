@@ -19,13 +19,20 @@ export default function UploadForm() {
 
     setLoading(true);
     try {
-      const response = await fetch(`${CONFIG.BACKEND_URL}/analyze`, {
+      // ✅ Fixed endpoint
+      const response = await fetch(`${CONFIG.BACKEND_URL}/api/upload`, {
         method: "POST",
         body: formData,
       });
 
       const data = await response.json();
       setResult(data);
+
+      if (response.ok) {
+        alert("✅ Evidence analyzed successfully!");
+      } else {
+        alert(`❌ ${data.error || "Failed to analyze image"}`);
+      }
     } catch (error) {
       console.error("Error:", error);
       alert("Something went wrong!");
@@ -54,4 +61,4 @@ export default function UploadForm() {
       )}
     </div>
   );
-    }
+}
