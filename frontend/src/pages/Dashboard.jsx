@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { BASE } from "../config"; // ✅ Import the same BASE constant
 
 export default function Dashboard({ onOpenCase, newCase }) {
   const [cases, setCases] = useState([]);
@@ -7,12 +8,14 @@ export default function Dashboard({ onOpenCase, newCase }) {
   useEffect(() => {
     async function fetchCases() {
       try {
-        const res = await fetch("https://geointel-backend.onrender.com/v1/cases");
+        const res = await fetch(`${BASE}/cases`); // ✅ Use BASE dynamically
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`Failed to fetch cases: ${res.status} ${txt}`);
+        }
         const data = await res.json();
-
-        console.log("📥 Dashboard fetched cases:", data); // 👈 Debug log
-
-        setCases(data || []); // fallback to empty array
+        console.log("📥 Dashboard fetched cases:", data);
+        setCases(Array.isArray(data) ? data : []);
       } catch (err) {
         console.error("❌ Error fetching cases:", err);
       } finally {
@@ -31,13 +34,11 @@ export default function Dashboard({ onOpenCase, newCase }) {
     }
   }, [newCase]);
 
-  // 🔴🟡🟢 Threat badge renderer
   const renderThreatBadge = (level) => {
     let color = "bg-gray-300 text-gray-800";
     if (level === "High") color = "bg-red-600 text-white";
     if (level === "Medium") color = "bg-yellow-400 text-black";
     if (level === "Low") color = "bg-green-600 text-white";
-
     return (
       <span className={`px-2 py-1 rounded text-xs font-semibold ${color}`}>
         {level}
@@ -45,7 +46,6 @@ export default function Dashboard({ onOpenCase, newCase }) {
     );
   };
 
-  // 🌍 Geolocation renderer with map link
   const renderLocation = (geo) => {
     if (!geo) return null;
     if (typeof geo === "string") {
@@ -80,11 +80,8 @@ export default function Dashboard({ onOpenCase, newCase }) {
               key={c.case_id}
               className="bg-white p-6 rounded-2xl shadow-md flex flex-col md:flex-row md:justify-between md:items-center border-l-4 border-blue-600"
             >
-              {/* Left side - case info */}
               <div className="flex-1">
-                <div className="font-bold text-lg text-gray-800">
-                  {c.case_id}
-                </div>
+                <div className="font-bold text-lg text-gray-800">{c.case_id}</div>
                 <div className="text-sm text-gray-600 mb-3">
                   {c.ai_insights || "No AI insights available"}
                 </div>
@@ -98,9 +95,7 @@ export default function Dashboard({ onOpenCase, newCase }) {
                   {c.objects_detected && (
                     <div>
                       🖼 Objects:{" "}
-                      <span className="italic">
-                        {c.objects_detected.join(", ")}
-                      </span>
+                      <span className="italic">{c.objects_detected.join(", ")}</span>
                     </div>
                   )}
                   {c.threat_level && (
@@ -109,7 +104,6 @@ export default function Dashboard({ onOpenCase, newCase }) {
                 </div>
               </div>
 
-              {/* Right side - button */}
               <div className="mt-4 md:mt-0">
                 <button
                   onClick={() => onOpenCase(c.case_id)}
